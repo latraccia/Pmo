@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, selezione, spunta, fase, da_confermare, csrf with context %}
+{% block titolo %}{{ team.nome }} · Team · {{ app_name }}{% endblock %}
+{% block contenuto %}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Team") }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ membri | length }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">{{ 'membro' if membri | length == 1 else 'membri' }}</span>
+      </p>
+      <dl class="tr-facts">
+        <div><dt>Pratiche attive</dt><dd>{{ n_pratiche }}</dd></div>
+        <div><dt>Caselle</dt><dd>{{ caselle | length }}</dd></div>
+        <div><dt>Clienti</dt><dd>{{ clienti | length }}</dd></div>
+      </dl>
+    </aside>
+    <div class="tr-intro__main">
+      <h1 class="pmo-titolo">{{ team.nome }}</h1>
+      <p class="tr-intro__lead">{{ team.descrizione or "I membri del team vedono le sue pratiche, le mail delle sue caselle e i documenti collegati." }}</p>
+      {% if not team.attivo %}<div class="pmo-scheda__stati pmo-mt-5"><span class="tr-status">Disattivato</span></div>{% endif %}
+      <div class="tr-btn-group">
+        <a class="tr-btn tr-btn--quiet" href="/impostazioni?scheda=team"><span>Tutti i team</span></a>
+        <a class="tr-btn tr-btn--secondary" href="/pratiche?team_id={{ team.id }}"><span>Pratiche del team</span></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="tr-card pmo-section" aria-labelledby="t-membri">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-membri">I <em>membri</em></h2>
+    <span class="tr-card__aside">il ruolo si cambia in Utenti e ruoli</span>
+  </div>
+  {% if membri %}
+  <div class="pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Persona</th><th>Ruolo</th><th>Altri team</th><th></th></tr></thead>
+    <tbody>
+    {% for m in membri %}
+      {%- set altri = m.teams | rejectattr('id', 'equalto', team.id) | map(attribute='nome') | sort | list -%}
+      <tr>
+        <td><span class="pmo-voce__titolo">{{ m.nome or m.email }}</span><p class="pmo-dato">{{ m.email }}</p>{% if not m.attivo %} <span class="tr-status">Disattivato</span>{% endif %}</td>
+        <td>{{ ETICHETTE_RUOLO.get(m.ruolo, m.ruolo) }}</td>
+        <td>{{ altri | join(', ') if altri else '-' }}</td>
+        <td><form method="post" action="/impostazioni/team/{{ team.id }}/membri/{{ m.id }}/rimuovi">{{ csrf() }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Togli</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="tr-card__empty">Nessun membro: aggiungi le persone che lavorano su queste pratiche</p>
+  {% endif %}
+  {% if candidati %}
+  <form method="post" action="/impostazioni/team/{{ team.id }}/membri" class="pmo-bar pmo-mt-4">
+    {{ csrf() }}
+    {% call selezione("user_id", "Persona", compatto=true) %}{% for u in candidati %}<option value="{{ u.id }}">{{ u.nome or u.email }}</option>{% endfor %}{% endcall %}
+    <div class="tr-btn-group"><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi</span></button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-dati-team">
+  <div class="tr-card__head"><h2 class="tr-card__title" id="t-dati-team">I <em>dati</em> del team</h2></div>
+  <form method="post" action="/impostazioni/team">
+    {{ csrf() }}<input type="hidden" name="team_id" value="{{ team.id }}">
+    <div class="pmo-grid">
+      {{ campo("nome", "Nome", team.nome, obbligatorio=true) }}
+      {{ campo("descrizione", "Descrizione", team.descrizione) }}
+    </div>
+    <div class="pmo-checks pmo-mt-4">{{ spunta("attivo", "Team attivo", team.attivo) }}</div>
+    <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva</span></button></div>
+  </form>
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-caselle-team">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-caselle-team">Le <em>caselle</em></h2>
+    <span class="tr-card__aside">si assegnano al team dalla pagina Caselle</span>
+  </div>
+  {% if caselle %}
+  <ul class="pmo-list">
+    {% for c in caselle %}
+    <li><span class="pmo-voce__titolo">{{ c.email }}</span> <span class="pmo-meta">{{ ('di ' ~ (c.owner.nome or c.owner.email)) if c.owner else 'senza proprietario' }}{% if not c.attivo %} · disattivata{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="tr-card__empty">Nessuna casella di team</p>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-clienti-team">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-clienti-team">I <em>clienti</em> di riferimento</h2>
+    <span class="tr-card__aside">si assegnano dalla scheda del cliente</span>
+  </div>
+  {% if clienti %}
+  <ul class="pmo-list">
+    {% for c in clienti %}
+    <li><a class="pmo-voce__titolo" href="/clienti/{{ c.id }}">{{ c.nome }}</a>{% if c.citta %} <span class="pmo-meta">{{ c.citta }}</span>{% endif %}{% if not c.attivo %} <span class="tr-status">Disattivato</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="tr-card__empty">Nessun cliente ha questo team come riferimento</p>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-pratiche-team">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-pratiche-team">Le <em>pratiche</em> in corso</h2>
+    <span class="tr-card__aside">{% if n_pratiche > pratiche | length %}le {{ pratiche | length }} più recenti di {{ n_pratiche }} · {% endif %}<a href="/pratiche?team_id={{ team.id }}">vedi tutte</a></span>
+  </div>
+  {% if pratiche %}
+  <div class="pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Pratica</th><th>Fase</th><th>Cliente</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
+    <tbody>
+    {% for p in pratiche %}
+      <tr>
+        <td><a class="pmo-title-cell" href="/pratiche/{{ p.id }}">{{ p.titolo }}</a><p class="pmo-dato">{{ p.codice }}</p></td>
+        <td>{{ fase(p.stato) }}{% if p.stato_verifica == 'proposto' %} {{ da_confermare("Proposta IA") }}{% endif %}</td>
+        <td>{{ p.cliente.nome if p.cliente else '-' }}</td>
+        <td>{{ (p.responsabile.nome or p.responsabile.email) if p.responsabile else '-' }}</td>
+        <td>{{ p.ultimo_evento_at | data }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="tr-card__empty">Nessuna pratica in corso per questo team</p>
+  {% endif %}
+</section>
+{% endblock %}

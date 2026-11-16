@@ -354,6 +354,9 @@ a.pmo-title-link:focus-visible { outline: 2px solid var(--tr-brand-500); outline
 /* Le tendine chiuse restano nascoste ma occupano spazio: in fondo a una tabella che scorre
    aggiungerebbero una barra verticale. Chiuse, qui si tolgono dal disegno. */
 .pmo-scroll .tr-select:not([data-open="true"]) .tr-select__panel { display: none; }
+/* Tabelle con tendine che stanno nella pagina: lo scorrimento taglierebbe il pannello aperto verso l'alto,
+   quindi scorrono solo sugli schermi stretti. */
+@media (min-width: 721px) { .pmo-scroll--stretto { overflow: visible; } }
 .pmo-table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--tr-ink-600); }
 .pmo-table th {
   padding: var(--tr-space-3) var(--tr-space-4) var(--tr-space-3) 0;

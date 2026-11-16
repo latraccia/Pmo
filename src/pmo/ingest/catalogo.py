@@ -25,9 +25,14 @@ class Catalogo:
 
     # --- lookup ---------------------------------------------------------------------------------
     def cliente_per_dominio(self, email: str | None) -> Cliente | None:
+        """Il cliente di un indirizzo: prima l'indirizzo esatto di un referente, poi il dominio."""
         dom = dominio(email)
         if not dom:
             return None
+        indirizzo = (email or "").strip().lower()
+        for cliente in self.clienti:
+            if any(k.attivo and k.email and k.email == indirizzo for k in cliente.contatti):
+                return cliente
         for cliente in self.clienti:
             for d in cliente.domini or []:
                 d = d.lower()
@@ -78,7 +83,11 @@ class Catalogo:
 
 def carica_catalogo(session: Session, settings: Settings | None = None) -> Catalogo:
     settings = settings or get_settings()
-    clienti = list(session.scalars(select(Cliente).where(Cliente.attivo.is_(True)).order_by(Cliente.nome)).all())
+    clienti = list(
+        session.scalars(
+            select(Cliente).options(selectinload(Cliente.contatti)).where(Cliente.attivo.is_(True)).order_by(Cliente.nome)
+        ).all()
+    )
     prodotti = list(session.scalars(select(Prodotto).where(Prodotto.attivo.is_(True)).order_by(Prodotto.nome)).all())
     utenti = session.scalars(select(User).where(User.attivo.is_(True)).order_by(User.nome)).all()
     team = [(u.nome or u.email, u.email) for u in utenti]

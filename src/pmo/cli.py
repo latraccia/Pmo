@@ -12,11 +12,13 @@ from sqlalchemy import func, select
 
 from pmo.config import get_settings
 
-app = typer.Typer(help="PMO La Traccia: tracciabilità pratiche da Gmail e Google Drive", no_args_is_help=True)
+app = typer.Typer(help="PANificator 360: tracciabilità pratiche da Gmail e Google Drive", no_args_is_help=True)
 utenti_app = typer.Typer(help="Gestione utenti")
 caselle_app = typer.Typer(help="Gestione caselle collegate")
+team_app = typer.Typer(help="Gestione dei team (gruppi di utenti che vedono le stesse pratiche)")
 app.add_typer(utenti_app, name="utenti")
 app.add_typer(caselle_app, name="caselle")
+app.add_typer(team_app, name="team")
 
 
 def _logging() -> None:
@@ -89,11 +91,24 @@ def gen_keys() -> None:
 
 
 @app.command()
-def serve(host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:  # noqa: S104
+def serve(
+    host: str = "0.0.0.0",  # noqa: S104
+    port: int = 8000,
+    reload: bool = typer.Option(False, help="Riparte da solo quando cambiano codice, template, CSS o JavaScript (sviluppo)"),
+) -> None:
     """Avvia l'interfaccia web."""
     import uvicorn
 
-    uvicorn.run("pmo.web.app:create_app", host=host, port=port, reload=reload, factory=True)
+    opzioni: dict = {}
+    if reload:
+        # Solo i sorgenti: guardare la cartella del progetto includerebbe .venv e il database. Anche template e file
+        # statici fanno ripartire il server, così cambia la versione dei file statici e il browser non usa quelli vecchi.
+        radice = _radice_progetto()
+        opzioni = {
+            "reload_dirs": [str(radice / "src"), str(radice / "config")],
+            "reload_includes": ["*.py", "*.html", "*.css", "*.js", "*.yaml"],
+        }
+    uvicorn.run("pmo.web.app:create_app", host=host, port=port, reload=reload, factory=True, **opzioni)
 
 
 @app.command("mcp")
@@ -188,15 +203,16 @@ def digest(
     anteprima: bool = typer.Option(False, help="Mostra il digest senza inviarlo"),
     a: list[str] = typer.Option(None, "--a", help="Destinatario (ripetibile)"),
 ) -> None:
-    """Invia (o mostra) il digest dei solleciti."""
+    """Invia (o mostra) il digest dei solleciti: uno per destinatario, con ciò che quel destinatario può vedere."""
     _logging()
     from pmo.db.session import session_scope
     from pmo.services.digest import invia_digest
 
     with session_scope() as session:
         esito = invia_digest(session, get_settings(), destinatari=list(a) if a else None, solo_anteprima=anteprima)
-    if anteprima:
-        typer.echo(esito.pop("testo", ""))
+    for email, testo in (esito.pop("anteprime", None) or {}).items():
+        typer.echo(f"===== Digest per {email} =====")
+        typer.echo(testo + "\n")
     _stampa(esito)
 
 
@@ -235,21 +251,95 @@ def scheduler() -> None:
 
 
 @utenti_app.command("aggiungi")
-def utenti_aggiungi(email: str, nome: str = "", admin: bool = False) -> None:
+def utenti_aggiungi(
+    email: str,
+    nome: str = "",
+    ruolo: str = typer.Option("", help="amministratore, direzione, amministrazione, responsabile, commerciale, operativo"),
+    admin: bool = typer.Option(False, help="Equivale a --ruolo amministratore"),
+) -> None:
     """Crea o aggiorna un utente abilitato all'accesso."""
     from pmo.db.models import User
     from pmo.db.session import session_scope
+    from pmo.permessi import Ruolo, ruolo_valido
 
+    scelto = Ruolo.AMMINISTRATORE if admin else ruolo_valido(ruolo) if ruolo else None
+    if ruolo and scelto is None:
+        raise typer.BadParameter(f"Ruolo '{ruolo}' non valido: usa uno tra {', '.join(r.value for r in Ruolo)}")
     with session_scope() as session:
         utente = session.scalar(select(User).where(User.email == email.lower()))
         if utente is None:
-            utente = User(email=email.lower())
+            utente = User(email=email.lower(), ruolo=Ruolo.OPERATIVO.value)
             session.add(utente)
         utente.nome = nome or utente.nome or email
-        if admin:
-            utente.ruolo = "admin"
+        if scelto is not None:
+            utente.ruolo = scelto.value
         utente.attivo = True
-    typer.echo(f"Utente {email} pronto ({'admin' if admin else 'membro'}).")
+        ruolo_finale = utente.ruolo
+    typer.echo(f"Utente {email} pronto ({ruolo_finale}).")
+
+
+@team_app.command("crea")
+def team_crea(nome: str, descrizione: str = "") -> None:
+    """Crea un team (o lo riattiva, se esiste già)."""
+    from pmo.db.models import Team
+    from pmo.db.session import session_scope
+
+    with session_scope() as session:
+        team = session.scalar(select(Team).where(Team.nome == nome.strip()))
+        if team is None:
+            team = Team(nome=nome.strip())
+            session.add(team)
+        team.descrizione = descrizione or team.descrizione or ""
+        team.attivo = True
+    typer.echo(f"Team '{nome}' pronto.")
+
+
+@team_app.command("aggiungi")
+def team_aggiungi(nome: str, email: str) -> None:
+    """Aggiunge un utente (già esistente) a un team."""
+    from pmo.db.models import Team, User
+    from pmo.db.session import session_scope
+
+    with session_scope() as session:
+        team = session.scalar(select(Team).where(Team.nome == nome.strip()))
+        utente = session.scalar(select(User).where(User.email == email.strip().lower()))
+        if team is None:
+            raise typer.BadParameter(f"Team '{nome}' inesistente: crealo con `pmo team crea`")
+        if utente is None:
+            raise typer.BadParameter(f"Utente {email} inesistente: crealo con `pmo utenti aggiungi`")
+        if utente not in team.membri:
+            team.membri.append(utente)
+    typer.echo(f"{email} aggiunto al team '{nome}'.")
+
+
+@team_app.command("togli")
+def team_togli(nome: str, email: str) -> None:
+    """Toglie un utente da un team."""
+    from pmo.db.models import Team, User
+    from pmo.db.session import session_scope
+
+    with session_scope() as session:
+        team = session.scalar(select(Team).where(Team.nome == nome.strip()))
+        utente = session.scalar(select(User).where(User.email == email.strip().lower()))
+        if team is None or utente is None:
+            raise typer.BadParameter("Team o utente inesistente")
+        if utente in team.membri:
+            team.membri.remove(utente)
+    typer.echo(f"{email} tolto dal team '{nome}'.")
+
+
+@team_app.command("elenco")
+def team_elenco() -> None:
+    """I team con i loro membri."""
+    from pmo.db.models import Team
+    from pmo.db.session import session_scope
+
+    with session_scope() as session:
+        righe = [
+            {"nome": t.nome, "attivo": t.attivo, "descrizione": t.descrizione, "membri": [f"{u.email} ({u.ruolo})" for u in t.membri]}
+            for t in session.scalars(select(Team).order_by(Team.nome)).all()
+        ]
+    _stampa(righe)
 
 
 @caselle_app.command("elenco")

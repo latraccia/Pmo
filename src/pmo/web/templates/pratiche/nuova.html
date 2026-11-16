@@ -28,8 +28,16 @@
       {% call selezione("stato", "Fase iniziale") %}
         {% for k, v in stati.items() if k not in ['chiusa', 'annullata'] %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
       {% endcall %}
+      {% call selezione("team_id", "Team", aiuto="Chi fa parte del team vede la pratica") %}
+        <option value="">Da assegnare</option>
+        {% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if team_proposto == t.id }}>{{ t.nome }}</option>{% endfor %}
+      {% endcall %}
       {% call selezione("responsabile_id", "Responsabile") %}
         <option value="">Io</option>
+        {% for u in utenti %}<option value="{{ u.id }}">{{ u.nome or u.email }}</option>{% endfor %}
+      {% endcall %}
+      {% call selezione("sostituto_id", "Sostituto") %}
+        <option value="">Nessuno</option>
         {% for u in utenti %}<option value="{{ u.id }}">{{ u.nome or u.email }}</option>{% endfor %}
       {% endcall %}
       {% call selezione("priorita", "Priorità") %}

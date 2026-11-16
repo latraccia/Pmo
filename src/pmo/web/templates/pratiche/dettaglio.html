@@ -25,6 +25,7 @@
       </p>
       <dl class="tr-facts">
         <div><dt>Fase</dt><dd>{{ pratica.stato | stato }}</dd></div>
+        <div><dt>Team</dt><dd>{{ pratica.team.nome if pratica.team else 'Da assegnare' }}</dd></div>
         <div><dt>Ultima attività</dt><dd>{{ pratica.ultimo_evento_at | data }}</dd></div>
         <div><dt>Scadenza</dt><dd>{{ pratica.data_scadenza | data }}</dd></div>
         <div><dt>Solleciti</dt><dd>{{ aperti | length }}</dd></div>
@@ -35,6 +36,7 @@
       {#- Il titolo di una pratica e' contenuto, spesso un nome proprio: in frase. -#}
       <h1 class="pmo-titolo">{{ pratica.titolo }}</h1>
       <p class="tr-intro__lead">{{ pratica.cliente.nome if pratica.cliente else 'Cliente da indicare' }}{% if pratica.prodotto %} · {{ pratica.prodotto.nome }}{% endif %}</p>
+      <p class="pmo-meta">Responsabile {{ (pratica.responsabile.nome or pratica.responsabile.email) if pratica.responsabile else 'da indicare' }}{% if pratica.sostituto %} · sostituto {{ pratica.sostituto.nome or pratica.sostituto.email }}{% endif %}</p>
       {% if pratica.descrizione %}<div class="tr-intro__prose"><p class="tr-body pmo-text">{{ pratica.descrizione }}</p></div>{% endif %}
       {#- La fase sta gia' nei dati a sinistra e nelle tappe qui sotto; qui solo cio' che non c'e' altrove. -#}
       {% if pratica.stato not in FASI or pratica.priorita == 'alta' %}
@@ -80,10 +82,12 @@
         <div class="tr-notice__content">
           <p class="tr-notice__title">Da confermare</p>
           <p class="tr-notice__body">Questa pratica è stata proposta dall'IA leggendo la posta. Verifica titolo, cliente e prodotto, poi conferma oppure scarta.</p>
+          {% if puo(utente, 'confermare') %}
           <div class="tr-btn-group pmo-notice-actions">
             <form method="post" action="/pratiche/{{ pratica.id }}/conferma">{{ csrf() }}<button class="tr-btn tr-btn--primary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma pratica</span></button></form>
             <form method="post" action="/pratiche/{{ pratica.id }}/scarta" data-conferma="Scartare la pratica proposta? I messaggi torneranno in revisione.">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Scarta</button></form>
           </div>
+          {% endif %}
         </div>
       </div>
       {% endif %}
@@ -116,14 +120,16 @@
     </div>
 
     {#- Tutte le fasi in chips: si sceglie a colpo d'occhio, poi il motivo e il comando. -#}
+    {% if stati_consentiti %}
     <form method="post" action="/pratiche/{{ pratica.id }}/stato" data-fase="{{ pratica.stato }}">
       {{ csrf() }}
-      {{ scelta_fase(stati, pratica.stato, "fase-pratica", "Cambia fase") }}
+      {{ scelta_fase(stati_consentiti, pratica.stato, "fase-pratica", "Cambia fase") }}
       <div class="pmo-bar pmo-bar--fill pmo-mt-4">
         {{ campo("motivo", "Motivo", compatto=true, largo=true, segnaposto="es. ordine firmato") }}
         <div class="tr-btn-group"><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Cambia fase</button></div>
       </div>
     </form>
+    {% endif %}
 
     {% if proposti %}
     <div class="tr-notice tr-notice--warning pmo-mt-5">
@@ -276,6 +282,13 @@
       <h2 class="tr-card__title">La <em>scheda</em></h2>
       <span class="tr-card__aside">origine {{ pratica.origine }}</span>
     </div>
+    {% if puo(utente, 'modificare_pratica') or puo(utente, 'modificare_importi') %}
+    {% if not puo(utente, 'modificare_pratica') %}
+    <div class="tr-notice tr-notice--info pmo-mb-5">
+      <span class="tr-notice__icon" aria-hidden="true"></span>
+      <div class="tr-notice__content"><p class="tr-notice__body">Con il tuo ruolo si salvano solo gli importi: gli altri campi restano come sono.</p></div>
+    </div>
+    {% endif %}
     <form method="post" action="/pratiche/{{ pratica.id }}/modifica">
       {{ csrf() }}
       <div class="pmo-stack">
@@ -284,7 +297,11 @@
         <div class="pmo-grid">
           {% call selezione("cliente_id", "Cliente") %}<option value="">Da indicare</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if pratica.cliente_id == c.id }}>{{ c.nome }}</option>{% endfor %}{% endcall %}
           {% call selezione("prodotto_id", "Prodotto") %}<option value="">Da indicare</option>{% for p in prodotti %}<option value="{{ p.id }}" {{ 'selected' if pratica.prodotto_id == p.id }}>{{ p.nome }}</option>{% endfor %}{% endcall %}
+          {% if puo(utente, 'assegnare') %}
+          {% call selezione("team_id", "Team") %}<option value="">Da assegnare</option>{% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if pratica.team_id == t.id }}>{{ t.nome }}</option>{% endfor %}{% if pratica.team and pratica.team not in teams %}<option value="{{ pratica.team_id }}" selected>{{ pratica.team.nome }}</option>{% endif %}{% endcall %}
           {% call selezione("responsabile_id", "Responsabile") %}<option value="">Da indicare</option>{% for u in utenti %}<option value="{{ u.id }}" {{ 'selected' if pratica.responsabile_user_id == u.id }}>{{ u.nome or u.email }}</option>{% endfor %}{% endcall %}
+          {% call selezione("sostituto_id", "Sostituto") %}<option value="">Nessuno</option>{% for u in utenti %}<option value="{{ u.id }}" {{ 'selected' if pratica.sostituto_user_id == u.id }}>{{ u.nome or u.email }}</option>{% endfor %}{% endcall %}
+          {% endif %}
           {% call selezione("priorita", "Priorità") %}{% for v, t in [('alta', 'Alta'), ('media', 'Media'), ('bassa', 'Bassa')] %}<option value="{{ v }}" {{ 'selected' if pratica.priorita == v }}>{{ t }}</option>{% endfor %}{% endcall %}
           {{ campo("data_scadenza", "Scadenza", pratica.data_scadenza.isoformat() if pratica.data_scadenza else '', tipo="date") }}
           {{ campo("importo_stima", "Stima (€)", pratica.importo_stima or '', segnaposto="12.000,00") }}
@@ -300,6 +317,7 @@
         <button class="tr-btn tr-btn--{{ 'secondary' if proposta else 'primary' }}" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva scheda</span></button>
       </div>
     </form>
+    {% endif %}
 
     <div class="tr-datatable pmo-mt-6">
       <div class="tr-datatable__row"><span class="tr-datatable__label">Aperta il</span><span class="tr-datatable__value">{{ pratica.data_apertura | data }}</span></div>
@@ -308,6 +326,7 @@
       <div class="tr-datatable__row"><span class="tr-datatable__label">Casella</span><span class="tr-datatable__value">{{ pratica.account_id or '-' }}</span></div>
     </div>
 
+    {% if puo(utente, 'unire') %}
     <details class="pmo-details pmo-mt-5">
       <summary><span class="pmo-details__label">Unisci a un'altra pratica (doppione)</span></summary>
       <form method="post" action="/pratiche/{{ pratica.id }}/unisci" class="pmo-details__body pmo-inline" data-conferma="Spostare eventi, messaggi e documenti nella pratica indicata e annullare questa?">
@@ -316,6 +335,7 @@
         <button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Unisci</button>
       </form>
     </details>
+    {% endif %}
   </section>
 </div>
 

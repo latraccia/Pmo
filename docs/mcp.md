@@ -97,7 +97,7 @@ Un elenco restituisce al massimo 100 elementi e dice sempre il totale; i testi l
 
 ### Azioni di scrittura (opzionali)
 
-Si abilitano solo avviando il server con `--scrittura` (`"args": ["mcp", "--scrittura"]`). Ogni modifica è attribuita all'utente indicato con `--utente EMAIL` (predefinito: il primo di `PMO_ADMIN_EMAILS`) e appare nella cronologia della pratica con la nota "via MCP".
+Si abilitano solo avviando il server con `--scrittura` (`"args": ["mcp", "--scrittura"]`). Ogni modifica è attribuita all'utente indicato con `--utente EMAIL` (predefinito: il primo di `PMO_ADMIN_EMAILS`) e appare nella cronologia della pratica con la nota "via MCP". Valgono i permessi del suo ruolo: un operativo, ad esempio, può aggiungere note ma non confermare pratiche né cambiarne la fase.
 
 | Strumento | Cosa fa |
 |---|---|
@@ -113,6 +113,7 @@ Claude è istruito a usarle solo su richiesta esplicita e a chiedere conferma pr
 
 - **I dati passano da Claude.** Quando Claude legge una pratica, il testo restituito entra nella conversazione e viene elaborato da Anthropic, come per qualsiasi altro contenuto condiviso con Claude. Valuta se è adatto ai dati della Cooperativa e dei suoi clienti. I corpi completi delle mail non vengono mai restituiti: solo oggetto, mittente, anteprima di circa 250 caratteri e link a Gmail.
 - **Le mail sono dati non attendibili.** Un'email o un documento può contenere testo pensato per ingannare l'assistente ("ignora le istruzioni precedenti e..."). Il server avverte Claude di trattare quei contenuti come dati. Per questo la sola lettura è la modalità predefinita: abilita `--scrittura` solo se ti serve e rileggi ciò che Claude propone di fare.
+- **Per conto di chi.** Il server lavora per conto dell'utente indicato con `--utente EMAIL` (predefinito: il primo di `PMO_ADMIN_EMAILS`), che deve esistere ed essere attivo nel PMO. Ne applica ruolo e team come l'interfaccia web: vede solo le pratiche, le mail e i documenti che quell'utente vede.
 - **Chi può usarlo.** Il server non ha un proprio login: chi può avviare `pmo mcp` sul tuo PC con il tuo `.env` accede ai dati, esattamente come con `pmo stato`. Non esporre il processo in rete.
 - **Token e segreti.** Il server non restituisce mai token OAuth, chiavi o contenuto del `.env`, e non esegue sincronizzazioni né chiamate a Google o ad Anthropic.
 

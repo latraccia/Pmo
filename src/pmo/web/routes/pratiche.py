@@ -26,9 +26,23 @@ from pmo.db.models import (
     StatoPratica,
     StatoSollecito,
     StatoVerifica,
+    Team,
     TipoEvento,
     TipoFonte,
     User,
+)
+from pmo.permessi import (
+    Azione,
+    carica_pratica_visibile,
+    elemento_visibile,
+    filtra_pratiche,
+    ids_pratiche_visibili,
+    pratica_visibile,
+    puo,
+    puo_passare_a,
+    team_ids,
+    team_predefinito,
+    vede_tutto,
 )
 from pmo.rules.engine import ordina_gravita
 from pmo.services import pratiche as svc
@@ -39,7 +53,17 @@ from pmo.services.richieste import (
     richieste_in_attesa,
     scadenze_vicine,
 )
-from pmo.web.deps import flash, get_db, pagina_per, redirect, render, utente_corrente, verifica_csrf
+from pmo.web.deps import (
+    flash,
+    get_db,
+    pagina_per,
+    redirect,
+    render,
+    richiede,
+    ritorno_sicuro,
+    utente_corrente,
+    verifica_csrf,
+)
 
 router = APIRouter()
 
@@ -81,11 +105,30 @@ def _riferimenti(testo: str | None) -> dict:
     return out
 
 
-def _carica(session: Session, pratica_id: int) -> Pratica:
-    pratica = session.get(Pratica, pratica_id)
-    if pratica is None:
-        raise HTTPException(status_code=404, detail="Pratica non trovata")
-    return pratica
+def _carica(session: Session, pratica_id: int, utente: User) -> Pratica:
+    return carica_pratica_visibile(session, pratica_id, utente)
+
+
+def _team_assegnabili(session: Session, utente: User) -> list[Team]:
+    """I team che l'utente può dare a una pratica: tutti per chi vede tutto, altrimenti i propri."""
+    query = select(Team).where(Team.attivo.is_(True)).order_by(Team.nome)
+    if not vede_tutto(utente):
+        query = query.where(Team.id.in_(team_ids(utente) or [0]))
+    return list(session.scalars(query).all())
+
+
+def _team_scelto(session: Session, utente: User, valore: str) -> int | None:
+    """Il team indicato nel modulo, solo se l'utente può assegnarlo (un id inventato non passa)."""
+    team_id = _intero_o(valore, None)
+    if team_id is None:
+        return None
+    if team_id not in {t.id for t in _team_assegnabili(session, utente)}:
+        raise HTTPException(status_code=400, detail="Team non valido")
+    return team_id
+
+
+def _id_utente(valore: str) -> int | None:
+    return _intero_o(valore, None)
 
 
 def _intero_o(valore: object, predefinito: int | None) -> int | None:
@@ -125,19 +168,25 @@ def elenco(
     cliente_id: IdFiltro = None,
     prodotto_id: IdFiltro = None,
     responsabile_id: str = "",  # un identificativo, oppure "nessuno" per le pratiche senza responsabile
+    team_id: str = "",  # un identificativo, oppure "nessuno" per le pratiche senza team
     verifica: str = "",
     tutte: InteroFiltro = 0,
     azione: str = "",
     richieste: InteroFiltro = 0,  # vecchio nome del filtro "in attesa di una nostra risposta", tenuto per i link già in uso
-    session: Session = Depends(get_db),
+    session: Session = Depends(get_db, scope="function"),
     utente: User = Depends(utente_corrente),
 ):
-    query = select(Pratica)
+    query = filtra_pratiche(select(Pratica), utente)
     senza_responsabile = responsabile_id == "nessuno"
     responsabile = "nessuno" if senza_responsabile else _intero_o(responsabile_id, None)
-    richieste_aperte = richieste_in_attesa(session)
-    attese_aperte = attese_cliente(session)
+    senza_team = team_id == "nessuno"
+    team = "nessuno" if senza_team else _intero_o(team_id, None)
+    visibili = ids_pratiche_visibili(session, utente)
+    richieste_aperte = richieste_in_attesa(session, visibili)
+    attese_aperte = attese_cliente(session, visibili)
     azioni = pratiche_con_azioni(session, richieste_aperte, attese_aperte)
+    if visibili is not None:
+        azioni = {chiave: ids & visibili for chiave, ids in azioni.items()}
     azione = azione or ("risposta" if richieste else "")
     if azione in azioni:
         query = query.where(Pratica.id.in_(list(azioni[azione]) or [0]))
@@ -156,6 +205,10 @@ def elenco(
         query = query.where(Pratica.responsabile_user_id.is_(None))
     elif responsabile:
         query = query.where(Pratica.responsabile_user_id == responsabile)
+    if senza_team:
+        query = query.where(Pratica.team_id.is_(None))
+    elif team:
+        query = query.where(Pratica.team_id == team)
     if verifica == "proposte":
         query = query.where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value)
     elif verifica == "confermate":
@@ -182,7 +235,7 @@ def elenco(
     }
     pagina = pagina_per(request, totale, PER_PAGINA_PRATICHE)
     pratiche = session.scalars(
-        query.options(selectinload(Pratica.cliente), selectinload(Pratica.prodotto), selectinload(Pratica.responsabile), selectinload(Pratica.solleciti))
+        query.options(selectinload(Pratica.cliente), selectinload(Pratica.prodotto), selectinload(Pratica.responsabile), selectinload(Pratica.team), selectinload(Pratica.solleciti))
         .order_by(Pratica.ultimo_evento_at.desc().nullslast(), Pratica.id.desc())
         .offset(pagina.offset)
         .limit(pagina.per_pagina)
@@ -200,23 +253,35 @@ def elenco(
         clienti=clienti,
         prodotti=prodotti,
         utenti=utenti,
+        teams=_team_assegnabili(session, utente),
+        stati_consentiti={k: v for k, v in ETICHETTE_STATO.items() if puo_passare_a(utente, k)},
         richieste_aperte=richieste_aperte,
         attese_aperte=attese_aperte,
         # quante pratiche attive hanno un'attesa, indipendentemente dagli altri filtri: servono ai comandi rapidi
         totali_attese={chiave: len(azioni[chiave]) for chiave in ("risposta", "attesa_cliente", "attese")},
         azioni_da_fare=AZIONI_DA_FARE,
         scadenze=scadenze_vicine(session),
-        filtri={"q": q, "stato": stato, "cliente_id": cliente_id, "prodotto_id": prodotto_id, "responsabile_id": responsabile, "verifica": verifica, "tutte": tutte, "azione": azione},
+        filtri={"q": q, "stato": stato, "cliente_id": cliente_id, "prodotto_id": prodotto_id, "responsabile_id": responsabile, "team_id": team, "verifica": verifica, "tutte": tutte, "azione": azione},
         stati=ETICHETTE_STATO,
     )
 
 
 @router.get("/pratiche/nuova")
-def nuova(request: Request, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def nuova(request: Request, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.CREARE_PRATICA))):
     clienti = session.scalars(select(Cliente).where(Cliente.attivo.is_(True)).order_by(Cliente.nome)).all()
     prodotti = session.scalars(select(Prodotto).where(Prodotto.attivo.is_(True)).order_by(Prodotto.nome)).all()
     utenti = session.scalars(select(User).where(User.attivo.is_(True)).order_by(User.nome)).all()
-    return render(request, "pratiche/nuova.html", utente, clienti=clienti, prodotti=prodotti, utenti=utenti, stati=ETICHETTE_STATO)
+    return render(
+        request,
+        "pratiche/nuova.html",
+        utente,
+        clienti=clienti,
+        prodotti=prodotti,
+        utenti=utenti,
+        teams=_team_assegnabili(session, utente),
+        team_proposto=team_predefinito(utente),
+        stati=ETICHETTE_STATO,
+    )
 
 
 @router.post("/pratiche", dependencies=[Depends(verifica_csrf)])
@@ -228,13 +293,17 @@ def crea(
     prodotto_id: str = Form(""),
     stato: str = Form("bozza"),
     responsabile_id: str = Form(""),
+    sostituto_id: str = Form(""),
+    team_id: str = Form(""),
     data_scadenza: str = Form(""),
     importo_offerta: str = Form(""),
     importo_ordine: str = Form(""),
     priorita: str = Form("media"),
-    session: Session = Depends(get_db),
-    utente: User = Depends(utente_corrente),
+    session: Session = Depends(get_db, scope="function"),
+    utente: User = Depends(richiede(Azione.CREARE_PRATICA)),
 ):
+    if stato in ("chiusa", "annullata") and not puo(utente, Azione.CHIUDERE):
+        raise HTTPException(status_code=403, detail="Il tuo ruolo non consente di creare una pratica chiusa")
     pratica = svc.crea_pratica(
         session,
         titolo,
@@ -242,7 +311,9 @@ def crea(
         cliente=session.get(Cliente, int(cliente_id)) if cliente_id else None,
         prodotto=session.get(Prodotto, int(prodotto_id)) if prodotto_id else None,
         stato=stato,
-        responsabile_user_id=int(responsabile_id) if responsabile_id else utente.id,
+        responsabile_user_id=_id_utente(responsabile_id) or utente.id,
+        sostituto_user_id=_id_utente(sostituto_id),
+        team_id=_team_scelto(session, utente, team_id),
         created_by_user_id=utente.id,
         data_scadenza=_date(data_scadenza),
         importo_offerta=_decimal(importo_offerta),
@@ -254,8 +325,8 @@ def crea(
 
 
 @router.get("/pratiche/{pratica_id}")
-def dettaglio(request: Request, pratica_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    pratica = _carica(session, pratica_id)
+def dettaglio(request: Request, pratica_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
+    pratica = _carica(session, pratica_id, utente)
     eventi = sorted(pratica.eventi, key=lambda e: (e.data_evento, e.id), reverse=True)
     messaggi = session.scalars(
         select(Messaggio).where(Messaggio.pratica_id == pratica.id).order_by(Messaggio.data.desc()).limit(200)
@@ -283,7 +354,9 @@ def dettaglio(request: Request, pratica_id: int, session: Session = Depends(get_
         clienti=clienti,
         prodotti=prodotti,
         utenti=utenti,
+        teams=_team_assegnabili(session, utente),
         stati=ETICHETTE_STATO,
+        stati_consentiti={k: v for k, v in ETICHETTE_STATO.items() if puo_passare_a(utente, k)},
         tipi_evento=[(t, ETICHETTE_EVENTO[t]) for t in TIPI_EVENTO_MANUALI],
         riferimenti_testo="\n".join(f"{k}={v}" for k, v in (pratica.riferimenti or {}).items()),
     )
@@ -298,6 +371,8 @@ def modifica(
     cliente_id: str = Form(""),
     prodotto_id: str = Form(""),
     responsabile_id: str = Form(""),
+    sostituto_id: str = Form(""),
+    team_id: str = Form(""),
     priorita: str = Form("media"),
     data_scadenza: str = Form(""),
     importo_stima: str = Form(""),
@@ -307,40 +382,49 @@ def modifica(
     riferimenti: str = Form(""),
     drive_folder_url: str = Form(""),
     note: str = Form(""),
-    session: Session = Depends(get_db),
-    utente: User = Depends(utente_corrente),
+    session: Session = Depends(get_db, scope="function"),
+    utente: User = Depends(richiede(Azione.MODIFICARE_PRATICA, Azione.MODIFICARE_IMPORTI)),
 ):
-    pratica = _carica(session, pratica_id)
-    pratica.titolo = titolo.strip()[:300]
-    pratica.descrizione = descrizione
-    pratica.cliente_id = int(cliente_id) if cliente_id else None
-    pratica.prodotto_id = int(prodotto_id) if prodotto_id else None
-    pratica.responsabile_user_id = int(responsabile_id) if responsabile_id else None
-    pratica.priorita = priorita
-    pratica.data_scadenza = _date(data_scadenza)
-    pratica.importo_stima = _decimal(importo_stima)
-    pratica.importo_offerta = _decimal(importo_offerta)
-    pratica.importo_ordine = _decimal(importo_ordine)
-    pratica.importo_fatturato = _decimal(importo_fatturato)
-    pratica.riferimenti = _riferimenti(riferimenti)
-    pratica.drive_folder_url = drive_folder_url.strip() or None
-    pratica.note = note
+    pratica = _carica(session, pratica_id, utente)
+    # Ognuno salva solo la parte che il suo ruolo gli consente: gli altri campi del modulo vengono ignorati.
+    if puo(utente, Azione.MODIFICARE_PRATICA):
+        pratica.titolo = titolo.strip()[:300]
+        pratica.descrizione = descrizione
+        pratica.cliente_id = int(cliente_id) if cliente_id else None
+        pratica.prodotto_id = int(prodotto_id) if prodotto_id else None
+        pratica.priorita = priorita
+        pratica.data_scadenza = _date(data_scadenza)
+        pratica.riferimenti = _riferimenti(riferimenti)
+        pratica.drive_folder_url = drive_folder_url.strip() or None
+        pratica.note = note
+    if puo(utente, Azione.ASSEGNARE):
+        pratica.responsabile_user_id = _id_utente(responsabile_id)
+        pratica.sostituto_user_id = _id_utente(sostituto_id)
+        pratica.team_id = _team_scelto(session, utente, team_id)
+    if puo(utente, Azione.MODIFICARE_IMPORTI):
+        pratica.importo_stima = _decimal(importo_stima)
+        pratica.importo_offerta = _decimal(importo_offerta)
+        pratica.importo_ordine = _decimal(importo_ordine)
+        pratica.importo_fatturato = _decimal(importo_fatturato)
     flash(request, "Pratica aggiornata.")
+    if not pratica_visibile(session, pratica, utente):
+        flash(request, "La pratica ora appartiene a un team di cui non fai parte: non la vedi più.", "avviso")
+        return redirect("/pratiche")
     return redirect(f"/pratiche/{pratica.id}")
 
 
 @router.post("/pratiche/{pratica_id}/stato", dependencies=[Depends(verifica_csrf)])
-def cambia_stato(request: Request, pratica_id: int, stato: str = Form(...), motivo: str = Form(""), ritorno: str = Form(""), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    pratica = _carica(session, pratica_id)
+def cambia_stato(request: Request, pratica_id: int, stato: str = Form(...), motivo: str = Form(""), ritorno: str = Form(""), session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
+    pratica = _carica(session, pratica_id, utente)
+    if not puo_passare_a(utente, stato):
+        raise HTTPException(status_code=403, detail="Il tuo ruolo non consente questo cambio di fase")
     try:
         svc.cambia_stato(session, pratica, stato, motivo=motivo, user_id=utente.id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Stato non valido") from None
     flash(request, f"{pratica.codice}: fase aggiornata a '{pratica.etichetta_stato}'.")
     # Dall'elenco si torna all'elenco, con gli stessi filtri; solo dentro le pratiche, mai verso un altro sito.
-    if ritorno.startswith("/pratiche") and not ritorno.startswith("//") and "\\" not in ritorno and "\n" not in ritorno:
-        return redirect(ritorno)
-    return redirect(f"/pratiche/{pratica.id}")
+    return redirect(ritorno_sicuro(ritorno, f"/pratiche/{pratica.id}", prefisso="/pratiche"))
 
 
 @router.post("/pratiche/{pratica_id}/eventi", dependencies=[Depends(verifica_csrf)])
@@ -353,10 +437,10 @@ def aggiungi_evento(
     data_evento: str = Form(""),
     importo: str = Form(""),
     scadenza: str = Form(""),
-    session: Session = Depends(get_db),
-    utente: User = Depends(utente_corrente),
+    session: Session = Depends(get_db, scope="function"),
+    utente: User = Depends(richiede(Azione.ANNOTARE)),
 ):
-    pratica = _carica(session, pratica_id)
+    pratica = _carica(session, pratica_id, utente)
     giorno = _date(data_evento)
     quando = datetime.combine(giorno, time(12, 0), tzinfo=UTC) if giorno else None
     svc.aggiungi_evento(
@@ -376,7 +460,8 @@ def aggiungi_evento(
 
 
 @router.post("/pratiche/{pratica_id}/eventi/{evento_id}/{azione}", dependencies=[Depends(verifica_csrf)])
-def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.ANNOTARE))):
+    _carica(session, pratica_id, utente)
     evento = session.get(Evento, evento_id)
     if evento is None or evento.pratica_id != pratica_id:
         raise HTTPException(status_code=404)
@@ -395,26 +480,26 @@ def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str
 
 
 @router.post("/pratiche/{pratica_id}/conferma", dependencies=[Depends(verifica_csrf)])
-def conferma(request: Request, pratica_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    pratica = _carica(session, pratica_id)
+def conferma(request: Request, pratica_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.CONFERMARE))):
+    pratica = _carica(session, pratica_id, utente)
     svc.conferma_pratica(session, pratica, utente.id, soglia=get_settings().event_confidence_threshold)
     flash(request, f"Pratica {pratica.codice} confermata.")
     return redirect(f"/pratiche/{pratica.id}")
 
 
 @router.post("/pratiche/{pratica_id}/scarta", dependencies=[Depends(verifica_csrf)])
-def scarta(request: Request, pratica_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    pratica = _carica(session, pratica_id)
+def scarta(request: Request, pratica_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.CONFERMARE))):
+    pratica = _carica(session, pratica_id, utente)
     svc.rifiuta_pratica(session, pratica, utente.id)
     flash(request, f"Pratica proposta {pratica.codice} scartata: i messaggi tornano in revisione.")
     return redirect("/revisione")
 
 
 @router.post("/pratiche/{pratica_id}/unisci", dependencies=[Depends(verifica_csrf)])
-def unisci(request: Request, pratica_id: int, codice: str = Form(...), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    pratica = _carica(session, pratica_id)
+def unisci(request: Request, pratica_id: int, codice: str = Form(...), session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.UNIRE))):
+    pratica = _carica(session, pratica_id, utente)
     destinazione = svc.trova_per_codice(session, codice.strip())
-    if destinazione is None or destinazione.id == pratica.id:
+    if destinazione is None or destinazione.id == pratica.id or not pratica_visibile(session, destinazione, utente):
         flash(request, "Codice pratica di destinazione non valido.", "errore")
         return redirect(f"/pratiche/{pratica.id}")
     svc.unisci_pratiche(session, pratica, destinazione, utente.id)
@@ -427,7 +512,7 @@ def unisci(request: Request, pratica_id: int, codice: str = Form(...), session: 
 
 def _collega_elemento(session: Session, elemento, codice: str, utente: User) -> Pratica | None:  # noqa: ANN001
     pratica = svc.trova_per_codice(session, codice.strip()) if codice.strip() else None
-    if pratica is None:
+    if pratica is None or not pratica_visibile(session, pratica, utente):
         return None
     elemento.pratica_id = pratica.id
     elemento.link_origine = "manuale"
@@ -443,22 +528,22 @@ def _collega_elemento(session: Session, elemento, codice: str, utente: User) -> 
 
 
 @router.post("/messaggi/{messaggio_id}/collega", dependencies=[Depends(verifica_csrf)])
-def collega_messaggio(request: Request, messaggio_id: int, codice: str = Form(""), ritorno: str = Form("/revisione"), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def collega_messaggio(request: Request, messaggio_id: int, codice: str = Form(""), ritorno: str = Form("/revisione"), session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.ANNOTARE))):
     messaggio = session.get(Messaggio, messaggio_id)
-    if messaggio is None:
+    if not elemento_visibile(session, messaggio, utente):
         raise HTTPException(status_code=404)
     pratica = _collega_elemento(session, messaggio, codice, utente)
     if pratica is None:
         flash(request, "Codice pratica non trovato.", "errore")
     else:
         flash(request, f"Messaggio collegato a {pratica.codice}.")
-    return redirect(ritorno)
+    return redirect(ritorno_sicuro(ritorno, "/revisione"))
 
 
 @router.post("/messaggi/{messaggio_id}/{azione}", dependencies=[Depends(verifica_csrf)])
-def messaggio_azione(request: Request, messaggio_id: int, azione: str, ritorno: str = Form("/revisione"), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def messaggio_azione(request: Request, messaggio_id: int, azione: str, ritorno: str = Form("/revisione"), session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.ANNOTARE))):
     messaggio = session.get(Messaggio, messaggio_id)
-    if messaggio is None:
+    if not elemento_visibile(session, messaggio, utente):
         raise HTTPException(status_code=404)
     if azione == "conferma" and messaggio.pratica_id:
         _collega_elemento(session, messaggio, messaggio.pratica.codice, utente)
@@ -480,26 +565,26 @@ def messaggio_azione(request: Request, messaggio_id: int, azione: str, ritorno: 
         flash(request, "Il messaggio verrà riclassificato alla prossima sincronizzazione.")
     else:
         raise HTTPException(status_code=404)
-    return redirect(ritorno)
+    return redirect(ritorno_sicuro(ritorno, "/revisione"))
 
 
 @router.post("/documenti/{documento_id}/collega", dependencies=[Depends(verifica_csrf)])
-def collega_documento(request: Request, documento_id: int, codice: str = Form(""), ritorno: str = Form("/revisione"), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def collega_documento(request: Request, documento_id: int, codice: str = Form(""), ritorno: str = Form("/revisione"), session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.ANNOTARE))):
     documento = session.get(Documento, documento_id)
-    if documento is None:
+    if not elemento_visibile(session, documento, utente):
         raise HTTPException(status_code=404)
     pratica = _collega_elemento(session, documento, codice, utente)
     if pratica is None:
         flash(request, "Codice pratica non trovato.", "errore")
     else:
         flash(request, f"Documento collegato a {pratica.codice}.")
-    return redirect(ritorno)
+    return redirect(ritorno_sicuro(ritorno, "/revisione"))
 
 
 @router.post("/documenti/{documento_id}/{azione}", dependencies=[Depends(verifica_csrf)])
-def documento_azione(request: Request, documento_id: int, azione: str, ritorno: str = Form("/revisione"), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def documento_azione(request: Request, documento_id: int, azione: str, ritorno: str = Form("/revisione"), session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.ANNOTARE))):
     documento = session.get(Documento, documento_id)
-    if documento is None:
+    if not elemento_visibile(session, documento, utente):
         raise HTTPException(status_code=404)
     if azione == "conferma" and documento.pratica_id:
         _collega_elemento(session, documento, documento.pratica.codice, utente)
@@ -514,4 +599,4 @@ def documento_azione(request: Request, documento_id: int, azione: str, ritorno: 
         flash(request, "Il documento verrà riclassificato alla prossima sincronizzazione.")
     else:
         raise HTTPException(status_code=404)
-    return redirect(ritorno)
+    return redirect(ritorno_sicuro(ritorno, "/revisione"))

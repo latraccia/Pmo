@@ -12,16 +12,15 @@ from pmo.config import get_settings
 from pmo.connectors.google_oauth import GoogleNonConfigurato, completa_login, dominio_consentito, url_login
 from pmo.db.base import utcnow
 from pmo.db.models import User
-from pmo.web.deps import flash, get_db, redirect, render, verifica_csrf
+from pmo.permessi import Ruolo
+from pmo.web.deps import flash, get_db, redirect, render, ritorno_sicuro, verifica_csrf
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
 def _destinazione_sicura(next_url: str | None) -> str:
-    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
-        return next_url
-    return "/"
+    return ritorno_sicuro(next_url, "/")
 
 
 def _accedi(request: Request, session: Session, email: str, nome: str = "", google_sub: str | None = None) -> User | None:
@@ -34,13 +33,13 @@ def _accedi(request: Request, session: Session, email: str, nome: str = "", goog
     if utente is None:
         if not (primo or email in settings.admin_emails or settings.allowed_domains):
             return None
-        utente = User(email=email, nome=nome or email, ruolo="membro", attivo=True, riceve_digest=True)
+        utente = User(email=email, nome=nome or email, ruolo=Ruolo.OPERATIVO.value, attivo=True, riceve_digest=True)
         session.add(utente)
         session.flush()
     if not utente.attivo:
         return None
     if primo or email in settings.admin_emails:
-        utente.ruolo = "admin"
+        utente.ruolo = Ruolo.AMMINISTRATORE.value
     if nome and not utente.nome:
         utente.nome = nome
     if google_sub:
@@ -72,7 +71,7 @@ def auth_google(request: Request, next: str | None = None):  # noqa: A002
 
 
 @router.get("/auth/callback")
-def auth_callback(request: Request, session: Session = Depends(get_db)):
+def auth_callback(request: Request, session: Session = Depends(get_db, scope="function")):
     state = request.session.pop("oauth_state", None)
     destinazione = request.session.pop("oauth_next", "/")
     if not state or request.query_params.get("state") != state:
@@ -92,7 +91,7 @@ def auth_callback(request: Request, session: Session = Depends(get_db)):
 
 
 @router.post("/auth/dev", dependencies=[Depends(verifica_csrf)])
-def auth_dev(request: Request, email: str = Form(...), next: str = Form("/"), session: Session = Depends(get_db)):  # noqa: A002
+def auth_dev(request: Request, email: str = Form(...), next: str = Form("/"), session: Session = Depends(get_db, scope="function")):  # noqa: A002
     settings = get_settings()
     if not settings.dev_login:
         flash(request, "Login di sviluppo disabilitato.", "errore")

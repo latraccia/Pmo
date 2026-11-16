@@ -1,13 +1,16 @@
 # Anagrafiche iniziali: clienti, prodotti e team. Caricate con `pmo seed` (idempotente: aggiorna per nome/email).
 # Modificare liberamente: domini e alias migliorano il riconoscimento automatico delle pratiche.
+# Ruoli ammessi: amministratore, direzione, amministrazione, responsabile, commerciale, operativo (predefinito).
+# Clienti: oltre a nome, alias, domini e tipo si possono indicare ragione_sociale, partita_iva, codice_fiscale,
+# indirizzo, citta, telefono, email, pec, codice_oracle, codice_vte, team e contatti (nome, ruolo, email, telefono).
 
 utenti:
   - email: egravela@latraccia.it
     nome: Emanuele Gravela
-    ruolo: admin
+    ruolo: amministratore
   - email: ploizzo@latraccia.it
     nome: Pasquale Loizzo
-    ruolo: admin
+    ruolo: amministratore
   - email: rantezza@latraccia.it
     nome: Rocco Antezza
   - email: vgravela@latraccia.it
@@ -44,6 +47,14 @@ utenti:
     nome: Rosanna Mazzoccoli
   - email: mgcasamassima@latraccia.it
     nome: M. G. Casamassima
+
+# Team: chi ne fa parte vede le pratiche del team (direzione e amministrazione vedono comunque tutto).
+# Un utente può stare in più team. Esempio:
+# team:
+#   - nome: Sanità Lazio
+#     descrizione: Aziende sanitarie del Lazio
+#     membri: [rantezza@latraccia.it, fnicoletti@latraccia.it]
+team: []
 
 prodotti:
   - nome: LURTO

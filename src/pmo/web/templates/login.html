@@ -15,7 +15,7 @@
         <span class="tr-brandmark__wordmark">traccia</span>
       </span>
       <span class="tr-clientmark__sep"></span>
-      <span class="tr-clientmark__product">PMO · Pratiche</span>
+      <span class="tr-clientmark__product">{{ app_name }}</span>
     </span>
     <span class="tr-eyebrow__label">Accesso riservato</span>
   </div>
@@ -24,7 +24,7 @@
 <main class="tr-login__main">
   <div class="tr-login__panel">
     {{ eyebrow("Accesso") }}
-    <h1 class="tr-h2">Accedi a <em>PMO</em></h1>
+    <h1 class="tr-h2">Accedi a <em>{{ app_name }}</em></h1>
     <p class="tr-body pmo-small pmo-mt-4">Tracciabilità delle pratiche dalla stima alla fattura, con solleciti automatici.</p>
 
     {% if google %}

@@ -21,9 +21,9 @@ Vale solo per le pratiche **confermate** e non annullate/sospese. Per le pratich
 - **Aperto** quando la condizione compare. Chiave univoca `<pratica>:<regola>`: non si duplica mai.
 - **In carico**: una persona lo ha preso; resta visibile.
 - **Risolto**: manualmente o dal sistema quando la condizione cessa (`risolto_da = sistema`). Se la condizione ricompare viene **riaperto** e il contatore `occorrenze` aumenta.
-- **Silenziato** fino a una data: non compare nel cruscotto né nel digest; alla scadenza dello snooze, se la condizione persiste, torna aperto.
+- **Silenziato** fino a una data: non compare nel cruscotto né nella notifica email; alla scadenza dello snooze, se la condizione persiste, torna aperto.
 
-Il digest giornaliero elenca i solleciti aperti e in carico, i nuovi in evidenza, con i contatori degli elementi da verificare.
+La notifica email giornaliera (nel codice "digest") elenca i solleciti aperti e in carico, i nuovi in evidenza, con i contatori degli elementi da verificare. Arriva all'indirizzo email di ogni utente attivo che ha la notifica email attiva, scelta per utente in Impostazioni → Utenti e ruoli; non esiste un elenco di destinatari a parte. È personale: ognuno riceve le sole pratiche, mail e documenti che vede nell'applicazione (ruolo e team). `pmo digest --anteprima` mostra la notifica di ciascun destinatario.
 
 ## Aggiungere una regola
 

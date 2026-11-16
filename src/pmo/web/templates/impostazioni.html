@@ -2,8 +2,7 @@
 {% from "_ds.html" import eyebrow, campo, area, selezione, spunta, csrf with context %}
 {% block titolo %}Impostazioni · {{ app_name }}{% endblock %}
 {% block contenuto %}
-{% set tipi_cliente = [('sanita', 'Sanità'), ('pa', 'Pubblica amministrazione'), ('partner', 'Partner'), ('altro', 'Altro')] %}
-{% set schede = [('regole', 'Regole di sollecito'), ('filtri', 'Filtri posta'), ('digest', 'Digest'), ('clienti', 'Clienti'), ('prodotti', 'Prodotti'), ('utenti', 'Utenti'), ('claude', 'Collega Claude')] %}
+{% set schede = [('regole', 'Regole di sollecito'), ('filtri', 'Filtri posta'), ('prodotti', 'Prodotti'), ('utenti', 'Utenti e ruoli'), ('team', 'Team'), ('claude', 'Collega Claude')] | selectattr(0, 'in', schede_consentite) | list %}
 
 {#- Un comando da copiare: riga mono con il pulsante di copia (pmo.js, data-copia). -#}
 {% macro comando(testo, messaggio="Comando copiato negli appunti.") -%}
@@ -16,16 +15,15 @@
 {% set guida = {
   'regole': "Le regole vengono valutate dopo ogni sincronizzazione e con «Ricalcola adesso» nella pagina dei solleciti. Qui si regolano soglia, gravità e attivazione.",
   'filtri': "I messaggi che corrispondono a questi filtri vengono importati ma segnati come ignorati senza passare dall'IA. Un codice pratica nell'oggetto vince sempre sui filtri.",
-  'digest': "Il riepilogo quotidiano dei solleciti, inviato ogni giorno alle " ~ ('%02d:%02d' % (settings.digest_hour, settings.digest_minute)) ~ " se lo scheduler è attivo.",
-  'clienti': "Nomi, alias e domini email dei clienti: più sono completi, più l'IA collega con certezza le mail alle pratiche.",
   'prodotti': "Prodotti e aree di attività, con gli alias con cui compaiono nelle mail e nei documenti.",
-  'utenti': "Le persone che accedono al PMO, il loro ruolo e chi riceve il digest.",
-  'claude': "Come collegare Claude Code al PMO con il protocollo MCP: pratiche, scadenze e solleciti diventano interrogabili in linguaggio naturale. Comandi e percorsi sono già quelli di questa installazione."} %}
+  'utenti': "Le persone che accedono a PANificator 360, il loro ruolo, i team di cui fanno parte e chi riceve la notifica email. La notifica è un riepilogo giornaliero (alle " ~ ('%02d:%02d' % (settings.digest_hour, settings.digest_minute)) ~ ") inviato all'indirizzo email dell'utente, con i soli solleciti e le verifiche delle pratiche che vede. Direzione e amministrazione vedono tutte le pratiche; gli altri ruoli solo quelle dei propri team.",
+  'team': "I gruppi di lavoro: ogni pratica appartiene a un team e la vedono i suoi membri. Un utente può stare in più team.",
+  'claude': "Come collegare Claude Code a PANificator 360 con il protocollo MCP: pratiche, scadenze e solleciti diventano interrogabili in linguaggio naturale. Comandi e percorsi sono già quelli di questa installazione."} %}
 {#- La testata della pagina sul suo piano bianco, chiusa dalla fila delle sezioni. -#}
 <div class="tr-panel">
   <div class="pmo-testata">
     {{ eyebrow("Impostazioni") }}
-    <h1 class="tr-h3 tr-intro__title">Impostazioni del <em>PMO</em></h1>
+    <h1 class="tr-h3 tr-intro__title">Impostazioni di <em>{{ app_name }}</em></h1>
     <p class="tr-intro__lead">{{ guida[scheda] }}</p>
   </div>
 
@@ -40,7 +38,7 @@
 <div class="pmo-tabpanel">
 
 {% if scheda == 'regole' %}
-  <div class="tr-panel pmo-scroll"><table class="pmo-table">
+  <div class="tr-panel pmo-scroll pmo-scroll--stretto"><table class="pmo-table">
     <thead><tr><th>Regola</th><th>Descrizione</th><th>Soglia (giorni)</th><th>Gravità</th><th>Attiva</th><th><span class="tr-sr-only">Azioni</span></th></tr></thead>
     <tbody>
     {% for r in regole %}
@@ -69,49 +67,6 @@
     </div>
     <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva filtri</span></button></div>
   </form>
-{% endif %}
-
-{% if scheda == 'digest' %}
-  <form method="post" action="/impostazioni/digest" class="tr-card">
-    <p class="tr-card__sub">Fuso orario {{ settings.timezone }}; si può inviare anche a mano con <span class="pmo-code">pmo digest</span>. Se non indichi destinatari, lo ricevono tutti gli utenti attivi con il digest abilitato.</p>
-    {{ csrf() }}
-    <div class="pmo-stack">
-      {{ spunta("attivo", "Digest attivo", digest.attivo) }}
-      {{ area("destinatari", "Destinatari", digest.destinatari | join('\n'), righe=5, aiuto="Uno per riga") }}
-    </div>
-    <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva</span></button></div>
-  </form>
-{% endif %}
-
-{% if scheda == 'clienti' %}
-  <section class="tr-card" aria-labelledby="t-nuovo-cliente">
-    <div class="tr-card__head"><h2 class="tr-card__title" id="t-nuovo-cliente">Nuovo <em>cliente</em></h2></div>
-    <form method="post" action="/impostazioni/clienti">
-      {{ csrf() }}
-      <div class="pmo-grid">
-        {{ campo("nome", "Nome", obbligatorio=true) }}
-        {{ campo("alias", "Alias", aiuto="Separati da virgola", segnaposto="Gemelli, Policlinico Gemelli") }}
-        {{ campo("domini", "Domini email", aiuto="Separati da virgola", segnaposto="policlinicogemelli.it") }}
-        {% call selezione("tipo", "Tipo") %}{% for v, t in tipi_cliente %}<option value="{{ v }}">{{ t }}</option>{% endfor %}{% endcall %}
-      </div>
-      <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi</span></button></div>
-    </form>
-  </section>
-  <div class="tr-panel pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Nome</th><th>Alias</th><th>Domini</th><th>Tipo</th><th>Attivo</th><th><span class="tr-sr-only">Azioni</span></th></tr></thead>
-    <tbody>
-    {% for c in clienti %}
-      <tr><form method="post" action="/impostazioni/clienti">{{ csrf() }}<input type="hidden" name="cliente_id" value="{{ c.id }}">
-        <td>{{ campo("nome", "Nome", c.nome, compatto=true, affiancata=false, largo=true) }}</td>
-        <td>{{ campo("alias", "Alias", c.alias | join(', '), compatto=true, affiancata=false) }}</td>
-        <td>{{ campo("domini", "Domini email", c.domini | join(', '), compatto=true, affiancata=false) }}</td>
-        <td>{% call selezione("tipo", "Tipo", compatto=true, affiancata=false) %}{% for v, t in tipi_cliente %}<option value="{{ v }}" {{ 'selected' if c.tipo == v }}>{{ t }}</option>{% endfor %}{% endcall %}</td>
-        <td>{{ spunta("attivo", "Cliente attivo", c.attivo, visibile=false) }}</td>
-        <td><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Salva</button></td>
-      </form></tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
 {% endif %}
 
 {% if scheda == 'prodotti' %}
@@ -145,8 +100,8 @@
 
 {% if scheda == 'claude' and mcp %}
   <section class="tr-card" aria-labelledby="t-claude-cosa">
-    <div class="tr-card__head"><h2 class="tr-card__title" id="t-claude-cosa">Interrogare il PMO da <em>Claude</em></h2></div>
-    <p class="tr-body">Il server MCP del PMO fa leggere a Claude le pratiche, la cronologia con i link a mail e documenti, i solleciti e la coda di revisione. Gira sul tuo PC, avviato da Claude, e non apre porte di rete. Una volta collegato puoi chiedere, ad esempio:</p>
+    <div class="tr-card__head"><h2 class="tr-card__title" id="t-claude-cosa">Interrogare {{ app_name }} da <em>Claude</em></h2></div>
+    <p class="tr-body">Il server MCP di {{ app_name }} fa leggere a Claude le pratiche, la cronologia con i link a mail e documenti, i solleciti e la coda di revisione. Gira sul tuo PC, avviato da Claude, e non apre porte di rete. Una volta collegato puoi chiedere, ad esempio:</p>
     <ul class="pmo-elenco">
       <li>«Quali ordini sono senza specifiche da più di 15 giorni?»</li>
       <li>«Riassumi la pratica PMO-2026-0042: cosa è successo e cosa manca?»</li>
@@ -275,28 +230,69 @@
       <div class="pmo-grid">
         {{ campo("email", "Email", tipo="email", obbligatorio=true) }}
         {{ campo("nome", "Nome") }}
-        {% call selezione("ruolo", "Ruolo") %}<option value="membro">Membro</option><option value="admin">Amministratore</option>{% endcall %}
+        {% call selezione("ruolo", "Ruolo") %}{% for r in ruoli %}<option value="{{ r }}" {{ 'selected' if r == 'operativo' }}>{{ ETICHETTE_RUOLO[r] }}</option>{% endfor %}{% endcall %}
       </div>
-      <div class="pmo-checks pmo-mt-4">{{ spunta("riceve_digest", "Riceve il digest", true) }}</div>
+      {% if teams %}
+      <div class="tr-fieldset pmo-gruppo pmo-mt-4" role="group" aria-labelledby="g-team-nuovo">
+        <span class="tr-fieldset__legend" id="g-team-nuovo">Team</span>
+        <div class="pmo-checks">{% for t in teams if t.attivo %}{{ spunta("team_ids", t.nome, false, valore=t.id) }}{% endfor %}</div>
+      </div>
+      {% endif %}
+      <div class="pmo-checks pmo-mt-4">{{ spunta("riceve_digest", "Notifica email", true) }}</div>
       <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi</span></button></div>
     </form>
   </section>
-  <div class="tr-panel pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Email</th><th>Nome</th><th>Ruolo</th><th>Attivo</th><th>Digest</th><th>Ultimo accesso</th><th><span class="tr-sr-only">Azioni</span></th></tr></thead>
+  <div class="tr-panel pmo-scroll pmo-scroll--stretto"><table class="pmo-table">
+    {#- Cinque colonne, così il pulsante Salva di ogni riga resta sempre sullo schermo. -#}
+    <thead><tr><th>Utente</th><th>Ruolo</th><th>Team</th><th>Opzioni</th><th><span class="tr-sr-only">Azioni</span></th></tr></thead>
     <tbody>
     {% for u in utenti %}
       <tr><form method="post" action="/impostazioni/utenti">{{ csrf() }}<input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="email" value="{{ u.email }}">
-        <td>{{ u.email }}</td>
-        <td>{{ campo("nome", "Nome", u.nome, compatto=true, affiancata=false) }}</td>
-        <td>{% call selezione("ruolo", "Ruolo", compatto=true, affiancata=false) %}<option value="membro" {{ 'selected' if u.ruolo == 'membro' }}>Membro</option><option value="admin" {{ 'selected' if u.ruolo == 'admin' }}>Amministratore</option>{% endcall %}</td>
-        <td>{{ spunta("attivo", "Utente attivo", u.attivo, visibile=false) }}</td>
-        <td>{{ spunta("riceve_digest", "Riceve il digest", u.riceve_digest, visibile=false) }}</td>
-        <td>{{ u.last_login_at | datadt }}</td>
+        <td>{{ campo("nome", "Nome", u.nome, compatto=true, affiancata=false, id="utente-nome-" ~ u.id) }}<p class="pmo-dato">{{ u.email }} · ultimo accesso {{ u.last_login_at | datadt }}</p></td>
+        <td>{% call selezione("ruolo", "Ruolo", compatto=true, affiancata=false, id="utente-ruolo-" ~ u.id) %}{% for r in ruoli %}<option value="{{ r }}" {{ 'selected' if u.ruolo == r }}>{{ ETICHETTE_RUOLO[r] }}</option>{% endfor %}{% endcall %}</td>
+        <td><div class="pmo-checks">{% for t in teams if t.attivo or t in u.teams %}{{ spunta("team_ids", t.nome, t in u.teams, valore=t.id) }}{% else %}<span class="pmo-muted">Nessun team</span>{% endfor %}</div></td>
+        <td><div class="pmo-checks">{{ spunta("attivo", "Attivo", u.attivo) }}{{ spunta("riceve_digest", "Notifica email", u.riceve_digest) }}</div></td>
         <td><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Salva</button></td>
       </form></tr>
     {% endfor %}
     </tbody>
   </table></div>
+{% endif %}
+
+{% if scheda == 'team' %}
+  <details class="tr-card pmo-details">
+    <summary><span class="pmo-details__label">Nuovo team</span></summary>
+    <form method="post" action="/impostazioni/team" class="pmo-details__body">
+      {{ csrf() }}<input type="hidden" name="nuovo" value="1">
+      <div class="pmo-grid">
+        {{ campo("nome", "Nome", obbligatorio=true, segnaposto="Sanità Lazio") }}
+        {{ campo("descrizione", "Descrizione") }}
+      </div>
+      <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea team</span></button></div>
+    </form>
+  </details>
+
+  <section class="pmo-section" aria-label="Elenco dei team">
+  {% if teams %}
+  <div class="tr-panel pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Team</th><th>Membri</th><th>Caselle</th><th>Pratiche attive</th></tr></thead>
+    <tbody>
+    {% for t in teams %}
+      {%- set n = conteggi_team.get(t.id, {}) -%}
+      {%- set nomi = t.membri | map(attribute='nome') | select | sort | list -%}
+      <tr>
+        <td><a class="pmo-title-cell" href="/impostazioni/team/{{ t.id }}">{{ t.nome }}</a>{% if t.descrizione %}<p class="pmo-dato">{{ t.descrizione }}</p>{% endif %}{% if not t.attivo %} <span class="tr-status">Disattivato</span>{% endif %}</td>
+        <td>{{ t.membri | length }}{% if nomi %}<p class="pmo-dato">{{ nomi[:3] | join(', ') }}{% if nomi | length > 3 %} e altri {{ nomi | length - 3 }}{% endif %}</p>{% endif %}</td>
+        <td>{{ n.get('caselle', 0) }}</td>
+        <td>{% if n.get('pratiche') %}<a href="/pratiche?team_id={{ t.id }}">{{ n.pratiche }}</a>{% else %}0{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <div class="tr-panel"><p class="tr-card__empty">Nessun team: creane uno per dividere le pratiche tra i gruppi di lavoro</p></div>
+  {% endif %}
+  </section>
 {% endif %}
 
 </div>

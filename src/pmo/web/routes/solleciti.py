@@ -10,9 +10,20 @@ from sqlalchemy.orm import Session, selectinload
 
 from pmo.db.base import utcnow
 from pmo.db.models import Pratica, Regola, Sollecito, StatoSollecito, User
+from pmo.permessi import Azione, filtra_pratiche, pratica_visibile
 from pmo.rules.engine import ordina_gravita
 from pmo.services.sync import esegui_regole_tutto
-from pmo.web.deps import flash, get_db, pagina_per, redirect, render, utente_corrente, verifica_csrf
+from pmo.web.deps import (
+    flash,
+    get_db,
+    pagina_per,
+    redirect,
+    render,
+    richiede,
+    ritorno_sicuro,
+    utente_corrente,
+    verifica_csrf,
+)
 
 router = APIRouter()
 
@@ -26,10 +37,14 @@ def elenco(
     gravita: str = "",
     regola: str = "",
     assegnato: str = "",
-    session: Session = Depends(get_db),
+    session: Session = Depends(get_db, scope="function"),
     utente: User = Depends(utente_corrente),
 ):
-    query = select(Sollecito).options(selectinload(Sollecito.pratica).selectinload(Pratica.cliente), selectinload(Sollecito.assegnato))
+    query = (
+        select(Sollecito)
+        .options(selectinload(Sollecito.pratica).selectinload(Pratica.cliente), selectinload(Sollecito.assegnato))
+        .where(Sollecito.pratica_id.in_(filtra_pratiche(select(Pratica.id), utente)))
+    )
     if stato == "aperti":
         query = query.where(Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]))
     elif stato:
@@ -62,7 +77,7 @@ def elenco(
 
 
 @router.post("/solleciti/ricalcola", dependencies=[Depends(verifica_csrf)])
-def ricalcola(request: Request, utente: User = Depends(utente_corrente)):
+def ricalcola(request: Request, utente: User = Depends(richiede(Azione.GESTIRE_SOLLECITI))):
     esito = esegui_regole_tutto()
     flash(request, f"Regole eseguite: {esito.get('nuovi', 0)} nuovi, {esito.get('riaperti', 0)} riaperti, {esito.get('risolti', 0)} risolti.")
     return redirect("/solleciti")
@@ -75,11 +90,11 @@ def azione(
     azione: str,
     giorni: int = Form(7),
     ritorno: str = Form("/solleciti"),
-    session: Session = Depends(get_db),
-    utente: User = Depends(utente_corrente),
+    session: Session = Depends(get_db, scope="function"),
+    utente: User = Depends(richiede(Azione.GESTIRE_SOLLECITI)),
 ):
     sollecito = session.get(Sollecito, sollecito_id)
-    if sollecito is None:
+    if sollecito is None or not pratica_visibile(session, sollecito.pratica, utente):
         raise HTTPException(status_code=404)
     if azione == "prendi":
         sollecito.stato = StatoSollecito.IN_CARICO
@@ -101,4 +116,4 @@ def azione(
         flash(request, "Sollecito riaperto.")
     else:
         raise HTTPException(status_code=404)
-    return redirect(ritorno)
+    return redirect(ritorno_sicuro(ritorno, "/solleciti"))

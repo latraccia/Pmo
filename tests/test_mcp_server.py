@@ -233,3 +233,34 @@ def test_aggiorna_sollecito(dati):
     assert chiama(server, "elenca_solleciti")["totale"] == 1
     with pytest.raises(ToolError, match="non trovato"):
         chiama(server, "aggiorna_sollecito", sollecito_id=9999, azione="risolvi")
+
+
+def test_il_server_rispetta_team_e_ruolo_dell_utente(dati, db):
+    """Un operativo vede solo le pratiche del suo team e non può confermare né cambiare fase."""
+    from pmo.db.models import Pratica, Team
+
+    alfa = Team(nome="Alfa")
+    db.add(alfa)
+    db.flush()
+    db.add(User(email="op@latraccia.it", nome="Op", ruolo="operativo", teams=[alfa]))
+    confermata = svc.trova_per_codice(db, dati["confermata"])
+    confermata.team_id = alfa.id
+    db.commit()
+
+    server = crea_server(scrittura=True, utente_email="op@latraccia.it")
+    elenco = chiama(server, "elenca_pratiche", solo_attive=False)
+    assert [p["codice"] for p in elenco["pratiche"]] == [dati["confermata"]]
+    with pytest.raises(ToolError, match="non trovata"):
+        chiama(server, "dettaglio_pratica", codice=dati["proposta"])
+    with pytest.raises(ToolError, match="non consente"):
+        chiama(server, "conferma_pratica", codice=dati["confermata"])
+    with pytest.raises(ToolError, match="non consente"):
+        chiama(server, "cambia_stato_pratica", codice=dati["confermata"], stato="chiusa")
+    assert chiama(server, "aggiungi_nota", codice=dati["confermata"], titolo="Sentito il cliente")["ok"]
+    assert chiama(server, "stato_sistema")["utente"]["ruolo"] == "operativo"
+    assert db.get(Pratica, confermata.id) is not None
+
+
+def test_utente_sconosciuto_errore_chiaro(dati):
+    with pytest.raises(ToolError, match="non esiste"):
+        chiama(crea_server(utente_email="nessuno@latraccia.it"), "elenca_pratiche")

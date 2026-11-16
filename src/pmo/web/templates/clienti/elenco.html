@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, selezione, spunta, csrf, paginazione with context %}
+{% block titolo %}Clienti · {{ app_name }}{% endblock %}
+{% block contenuto %}
+{%- set etichette_tipo = dict(tipi_cliente) -%}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Clienti") }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ pagina.totale }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">clienti<br>{{ 'in elenco' if filtri.tutti else 'attivi' }}</span>
+      </p>
+    </aside>
+
+    <div class="tr-intro__main">
+      <h1 class="tr-h3 tr-intro__title">I <em>clienti</em></h1>
+      <p class="tr-intro__lead">Anagrafica, referenti e codici nei sistemi aziendali. Domini e indirizzi dei referenti aiutano l'IA a collegare le mail alle pratiche giuste.</p>
+      <form method="get" aria-label="Filtri">
+        <div class="pmo-grid">
+          {{ campo("q", "Cerca", filtri.q, segnaposto="nome, ragione sociale, P.IVA, città, codici", icona="search") }}
+        </div>
+        <div class="pmo-checks pmo-mt-4">{{ spunta("tutti", "Includi i clienti disattivati", filtri.tutti) }}</div>
+        <div class="tr-btn-group pmo-mt-4">
+          <button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Cerca</button>
+          {% if filtri.q or filtri.tutti %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/clienti">Azzera</a>{% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if puo(utente, 'gestire_clienti') %}
+<details class="tr-card pmo-details pmo-section">
+  <summary><span class="pmo-details__label">Nuovo cliente</span></summary>
+  <form method="post" action="/clienti" class="pmo-details__body">
+    {{ csrf() }}
+    <div class="pmo-grid">
+      {{ campo("nome", "Nome", obbligatorio=true) }}
+      {{ campo("alias", "Alias", aiuto="Separati da virgola", segnaposto="Gemelli, Policlinico Gemelli") }}
+      {{ campo("domini", "Domini email", aiuto="Separati da virgola", segnaposto="policlinicogemelli.it") }}
+      {% call selezione("tipo", "Tipo") %}{% for v, t in tipi_cliente %}<option value="{{ v }}">{{ t }}</option>{% endfor %}{% endcall %}
+    </div>
+    <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea cliente</span></button></div>
+  </form>
+</details>
+{% endif %}
+
+<section class="pmo-section" aria-label="Elenco dei clienti">
+  {% if clienti %}
+  <div class="tr-panel pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Cliente</th><th>Tipo</th><th>P.IVA</th><th>Città</th><th>Team</th><th>Referenti</th><th>Pratiche attive</th></tr></thead>
+    <tbody>
+    {% for c in clienti %}
+      <tr>
+        <td><a class="pmo-title-cell" href="/clienti/{{ c.id }}">{{ c.nome }}</a>{% if c.ragione_sociale and c.ragione_sociale != c.nome %}<p class="pmo-dato">{{ c.ragione_sociale }}</p>{% endif %}{% if not c.attivo %} <span class="tr-status">Disattivato</span>{% endif %}</td>
+        <td>{{ etichette_tipo.get(c.tipo, c.tipo) }}</td>
+        <td>{{ c.partita_iva or '-' }}</td>
+        <td>{{ c.citta or '-' }}</td>
+        <td>{{ c.team.nome if c.team else '-' }}</td>
+        <td>{{ c.contatti | selectattr('attivo') | list | length }}</td>
+        <td>{% if attive.get(c.id) %}<a href="/pratiche?cliente_id={{ c.id }}">{{ attive[c.id] }}</a>{% else %}0{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {{ paginazione(pagina) }}
+  {% else %}
+  <div class="tr-panel"><p class="tr-card__empty">Nessun cliente trovato</p></div>
+  {% endif %}
+</section>
+{% endblock %}

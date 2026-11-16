@@ -22,6 +22,15 @@
     <div class="tr-intro__main">
       <h1 class="tr-h3 tr-intro__title">Cosa richiede <em>attenzione</em></h1>
       <p class="tr-intro__lead">Solleciti aperti, scadenze vicine e tutto ciò che l'IA ha proposto e una persona deve ancora confermare.</p>
+      {% if senza_team %}
+      <div class="tr-notice tr-notice--warning pmo-mt-5">
+        <span class="tr-notice__icon" aria-hidden="true"></span>
+        <div class="tr-notice__content">
+          <p class="tr-notice__title">Non fai ancora parte di un team</p>
+          <p class="tr-notice__body">Vedi solo le pratiche di cui sei responsabile o che hai creato, e quelle nate dalle tue caselle. Chiedi a un amministratore di aggiungerti a un team.</p>
+        </div>
+      </div>
+      {% endif %}
 
       <section class="pmo-mt-6" aria-labelledby="sez-verifica">
         <h2 class="tr-sr-only" id="sez-verifica">Da verificare</h2>

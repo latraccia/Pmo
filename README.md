@@ -1,4 +1,6 @@
-# PMO La Traccia
+# PANificator 360
+
+Applicazione di La Traccia per seguire pratiche e ordini (nel codice e nei comandi resta il nome tecnico `pmo`).
 
 Tracciabilità delle pratiche dalla **stima** all'**offerta**, all'**ordine**, alle **specifiche**, allo **sviluppo**, alla **consegna** e alla **fatturazione**, costruita a partire da ciò che già esiste: la posta Gmail e il Google Drive delle persone che seguono i progetti. Ogni pratica ha un identificativo univoco (`PMO-AAAA-NNNN`), una cronologia di eventi con il collegamento alla fonte (mail o documento) e un insieme di **solleciti automatici** (ordine senza specifiche, scadenze vicine o superate, consegnato ma non fatturato, fatturato diverso dall'ordinato, pratica ferma).
 
@@ -11,7 +13,7 @@ Il sistema nasce dalla proposta "tracciabilità ordini e solleciti automatici" e
 3. **Collegamento certo.** Un messaggio con il tag `[PMO-2026-0012]` nell'oggetto, o un messaggio di un thread già collegato, viene assegnato alla pratica senza bisogno dell'intelligenza artificiale.
 4. **Classificazione con Claude.** Per tutto il resto il modello riceve il catalogo (clienti, prodotti, team, pratiche aperte) e il thread, e restituisce un JSON validato: pertinenza, pratica (esistente o nuova), eventi estratti con date, importi, scadenze e riferimenti (numero ordine, CIG, protocollo). Niente viene applicato alla cieca: le pratiche nuove e i collegamenti incerti finiscono nella **coda di revisione**; gli eventi con confidenza bassa restano "proposti" finché una persona non li conferma.
 5. **Stato e cronologia.** Gli eventi confermati avanzano automaticamente lo stato della pratica (mai all'indietro) e aggiornano importi, scadenze e riferimenti.
-6. **Solleciti.** Dopo ogni sincronizzazione le regole producono i solleciti, che si risolvono da soli quando la condizione cessa. Un **digest** giornaliero riepiloga solleciti e cose da verificare.
+6. **Solleciti.** Dopo ogni sincronizzazione le regole producono i solleciti, che si risolvono da soli quando la condizione cessa. Chi ha la **notifica email** attiva (si sceglie per ciascun utente in Impostazioni → Utenti e ruoli) riceve ogni mattina, al proprio indirizzo email, un riepilogo dei solleciti e delle cose da verificare delle pratiche che vede.
 
 ## Requisiti
 
@@ -42,12 +44,13 @@ Con Docker: `docker compose up -d` (PostgreSQL incluso, scheduler attivo), dopo 
 
 ## Primi passi nell'interfaccia
 
-1. **Accedi con Google** con un indirizzo del dominio ammesso. Il primo utente che entra diventa amministratore (oltre a quelli in `PMO_ADMIN_EMAILS`).
-2. **Caselle → Collega con Google.** Autorizza la tua casella. Poi aggiungi le cartelle Drive da monitorare incollandone l'URL (ad esempio le cartelle Offerte, Ordini e le cartelle per cliente).
-3. **Sincronizza ora.** La prima importazione legge la finestra configurata (`PMO_SYNC_WINDOW_DAYS`); se ci sono molti messaggi, i successivi vengono elaborati ai giri seguenti (al massimo `PMO_MAX_MESSAGES_PER_RUN` per volta). Da riga di comando: `pmo sync`.
-4. **Revisione.** Conferma o scarta le pratiche proposte, collega a mano le mail che l'IA non ha saputo assegnare, verifica gli eventi proposti nel dettaglio di ogni pratica.
-5. **Da oggi in poi** metti il tag della pratica nell'oggetto delle mail (nel dettaglio c'è il pulsante *Copia oggetto mail*): quelle mail vengono collegate senza ambiguità, anche se arrivano in copia ad altre caselle collegate.
-6. **Solleciti e digest.** La pagina Solleciti mostra cosa sta scivolando; ogni sollecito si può prendere in carico, risolvere o silenziare per N giorni. Il digest parte ogni mattina se lo scheduler è attivo (`PMO_SCHEDULER_ENABLED=true`) oppure con `pmo digest`.
+1. **Accedi con Google** con un indirizzo del dominio ammesso. Il primo utente che entra diventa amministratore (oltre a quelli in `PMO_ADMIN_EMAILS`); gli altri entrano come *operativi*.
+2. **Team e ruoli.** In *Impostazioni → Team* crea i gruppi di lavoro e aggiungi le persone; in *Impostazioni → Utenti e ruoli* assegna a ciascuno il ruolo (amministratore, direzione, amministrazione, responsabile, commerciale, operativo). Direzione e amministrazione vedono tutte le pratiche; gli altri solo quelle dei propri team. Dettagli in [docs/architettura.md](docs/architettura.md#ruoli-team-e-visibilità).
+3. **Caselle → Collega con Google.** Autorizza la tua casella. Poi aggiungi le cartelle Drive da monitorare incollandone l'URL (ad esempio le cartelle Offerte, Ordini e le cartelle per cliente).
+4. **Sincronizza ora.** La prima importazione legge la finestra configurata (`PMO_SYNC_WINDOW_DAYS`); se ci sono molti messaggi, i successivi vengono elaborati ai giri seguenti (al massimo `PMO_MAX_MESSAGES_PER_RUN` per volta). Da riga di comando: `pmo sync`.
+5. **Revisione.** Conferma o scarta le pratiche proposte, collega a mano le mail che l'IA non ha saputo assegnare, verifica gli eventi proposti nel dettaglio di ogni pratica.
+6. **Da oggi in poi** metti il tag della pratica nell'oggetto delle mail (nel dettaglio c'è il pulsante *Copia oggetto mail*): quelle mail vengono collegate senza ambiguità, anche se arrivano in copia ad altre caselle collegate.
+7. **Solleciti e notifiche email.** La pagina Solleciti mostra cosa sta scivolando; ogni sollecito si può prendere in carico, risolvere o silenziare per N giorni. La notifica email (nel codice e nei comandi si chiama ancora "digest") parte ogni mattina se lo scheduler è attivo (`PMO_SCHEDULER_ENABLED=true`) oppure con `pmo digest`, e va solo agli utenti attivi che l'hanno attiva.
 
 ## Convenzione per l'oggetto delle mail
 
@@ -67,12 +70,13 @@ Il tag può stare ovunque nell'oggetto e sopravvive ai "Re:" e agli inoltri. Lo 
 | `pmo sync [--account EMAIL] [--completa] [--giorni N] [--no-classifica]` | importa, classifica, esegue le regole |
 | `pmo classifica` | classifica solo ciò che è in attesa (senza scaricare) |
 | `pmo regole` | ricalcola i solleciti |
-| `pmo digest [--anteprima] [--a EMAIL]` | invia o mostra il digest |
+| `pmo digest [--anteprima] [--a EMAIL]` | invia o mostra le notifiche email (riepilogo giornaliero) |
 | `pmo stato` | riepilogo numerico |
 | `pmo scheduler` | esegue lo scheduler in primo piano (alternativa a `PMO_SCHEDULER_ENABLED`) |
 | `pmo caselle collega` | collega una casella dal terminale (apre il browser) |
 | `pmo caselle cartella EMAIL URL` | aggiunge una cartella Drive da monitorare |
-| `pmo utenti aggiungi EMAIL --admin` | abilita un utente |
+| `pmo utenti aggiungi EMAIL [--ruolo R]` | abilita un utente (`--admin` equivale a `--ruolo amministratore`) |
+| `pmo team crea NOME` · `pmo team aggiungi NOME EMAIL` · `pmo team togli NOME EMAIL` · `pmo team elenco` | gestisce i team |
 | `pmo gen-keys` | genera le chiavi per `.env` |
 | `pmo mcp [--scrittura]` | avvia il server MCP (stdio) per collegare l'applicazione a Claude |
 
@@ -103,7 +107,7 @@ La classificazione usa Claude con structured outputs e prompt caching (il catalo
 
 - Login solo con Google e domini ammessi; CSRF su tutte le azioni; sessioni firmate.
 - Token OAuth cifrati con Fernet (`PMO_ENCRYPTION_KEY`), scope in sola lettura salvo `PMO_GMAIL_SEND_SCOPE`.
-- Ogni utente vede e sincronizza le proprie caselle; gli amministratori tutte. Le pratiche sono condivise dal team.
+- Ogni utente ha un ruolo e appartiene a uno o più team: vede le pratiche dei propri team (direzione e amministrazione tutte), le proprie caselle e quelle dei suoi team. I controlli valgono sia nell'interfaccia sia nel server MCP (`src/pmo/permessi.py`).
 - Il corpo delle mail viene salvato troncato (`PMO_BODY_MAX_CHARS`) per la revisione e il contesto dell'IA; gli allegati non vengono conservati, solo un estratto testuale.
 
 ## Sviluppo
@@ -115,6 +119,8 @@ pytest
 ```
 
 I test usano SQLite e un classificatore finto: non chiamano Google né Anthropic. Con `PMO_DEV_LOGIN=true` si entra con la sola email, utile in locale.
+
+Su Windows, per lavorare in locale basta un doppio clic su `avvia_sviluppo.bat`: usa `.venv` senza attivarlo, lavora su `data\prova.sqlite` (alla prima volta una copia di `data\pmo.sqlite`), aggiorna lo schema, avvia il server su http://localhost:8010 con il login di sviluppo e apre il browser. Il server riparte da solo quando cambiano codice, template, CSS o JavaScript (`pmo serve --reload`); le modifiche a `.env` richiedono di riaprire il batch.
 
 ## Struttura del progetto
 

@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, HTTPException, Request
@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from pmo.config import get_settings
 from pmo.db.models import ETICHETTE_EVENTO, ETICHETTE_STATO, FASI_ORDINATE, User
 from pmo.db.session import get_session
+from pmo.permessi import ETICHETTE_RUOLO, Azione, puo, vede_tutto
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -32,6 +33,12 @@ class NonAutenticato(Exception):
 
 
 def get_db() -> Iterator[Session]:
+    """Sessione del database per una richiesta, da usare sempre con `Depends(get_db, scope="function")`.
+
+    Con lo scope "function" il commit avviene appena la route finisce, prima che la risposta parta. Con lo scope
+    predefinito FastAPI lo eseguirebbe dopo l'invio: il browser, seguendo subito il redirect di un modulo, leggerebbe
+    i dati di prima (ad esempio il ruolo appena cambiato).
+    """
     session = get_session()
     try:
         yield session
@@ -43,7 +50,7 @@ def get_db() -> Iterator[Session]:
         session.close()
 
 
-def utente_corrente(request: Request, session: Session = Depends(get_db)) -> User:
+def utente_corrente(request: Request, session: Session = Depends(get_db, scope="function")) -> User:
     user_id = request.session.get("user_id")
     if not user_id:
         raise NonAutenticato()
@@ -54,10 +61,15 @@ def utente_corrente(request: Request, session: Session = Depends(get_db)) -> Use
     return utente
 
 
-def admin_richiesto(utente: User = Depends(utente_corrente)) -> User:
-    if not utente.is_admin:
-        raise HTTPException(status_code=403, detail="Operazione riservata agli amministratori")
-    return utente
+def richiede(*azioni: Azione):  # noqa: ANN201
+    """Dipendenza FastAPI: l'utente deve poter compiere almeno una delle azioni indicate, altrimenti 403."""
+
+    def _verifica(utente: User = Depends(utente_corrente)) -> User:
+        if not any(puo(utente, a) for a in azioni):
+            raise HTTPException(status_code=403, detail="Il tuo ruolo non consente questa operazione")
+        return utente
+
+    return _verifica
 
 
 def csrf_token(request: Request) -> str:
@@ -147,6 +159,20 @@ def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
 
+def ritorno_sicuro(url: str | None, predefinito: str = "/", prefisso: str = "/") -> str:
+    """L'indirizzo a cui tornare dopo un'azione, solo se è una pagina di questa applicazione; altrimenti `predefinito`.
+
+    Il valore arriva dal modulo, quindi chiunque può scriverlo: si scartano altri siti ("https://...", "//sito",
+    una barra seguita da una barra rovesciata, che i browser trattano come "//sito") e i caratteri di controllo, che potrebbero spezzare l'intestazione.
+    """
+    if not url or not url.startswith(prefisso) or url.startswith("//") or "\\" in url or any(ord(c) < 32 or ord(c) == 127 for c in url):
+        return predefinito
+    parti = urlsplit(url)
+    if parti.scheme or parti.netloc:
+        return predefinito
+    return url
+
+
 # --- filtri Jinja --------------------------------------------------------------------------
 
 
@@ -219,7 +245,7 @@ ETICHETTE_ESECUZIONE = {
     "classify": "Classificazione mail",
     "classify_drive": "Classificazione documenti",
     "regole": "Calcolo dei solleciti",
-    "digest": "Digest",
+    "digest": "Notifiche email",
 }
 
 
@@ -268,10 +294,14 @@ templates.env.globals["asset_v"] = _versione_statici()
 templates.env.globals["ETICHETTE_STATO"] = ETICHETTE_STATO
 templates.env.globals["FASI"] = [str(f.value) for f in FASI_ORDINATE]
 templates.env.globals["ETICHETTE_EVENTO"] = ETICHETTE_EVENTO
+templates.env.globals["ETICHETTE_RUOLO"] = ETICHETTE_RUOLO
+templates.env.globals["puo"] = puo
+templates.env.globals["vede_tutto"] = vede_tutto
 
 
-def _conteggi_menu() -> dict[str, int]:
-    """I numeri accanto alle voci del menu: cio' che aspetta qualcuno. Se il database non risponde, niente numeri."""
+def _conteggi_menu(utente_id: int) -> dict[str, int]:
+    """I numeri accanto alle voci del menu: cio' che aspetta qualcuno, tra cio' che l'utente vede.
+    Se il database non risponde, niente numeri."""
     from pmo.db.models import (
         Documento,
         Messaggio,
@@ -281,14 +311,23 @@ def _conteggi_menu() -> dict[str, int]:
         StatoSollecito,
         StatoVerifica,
     )
+    from pmo.permessi import filtra_elementi, filtra_pratiche
 
     try:
         with get_session() as s:
+            utente = s.get(User, utente_id)
+            pratiche = filtra_pratiche(select(Pratica.id), utente)
             return {
-                "solleciti": s.scalar(select(func.count(Sollecito.id)).where(Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]))) or 0,
-                "revisione": (s.scalar(select(func.count(Pratica.id)).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value)) or 0)
-                + (s.scalar(select(func.count(Messaggio.id)).where(Messaggio.stato == StatoMessaggio.DA_RIVEDERE.value)) or 0)
-                + (s.scalar(select(func.count(Documento.id)).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value)) or 0),
+                "solleciti": s.scalar(
+                    select(func.count(Sollecito.id)).where(
+                        Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]),
+                        Sollecito.pratica_id.in_(pratiche),
+                    )
+                )
+                or 0,
+                "revisione": (s.scalar(filtra_pratiche(select(func.count(Pratica.id)).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value), utente)) or 0)
+                + (s.scalar(filtra_elementi(select(func.count(Messaggio.id)).where(Messaggio.stato == StatoMessaggio.DA_RIVEDERE.value), utente, Messaggio)) or 0)
+                + (s.scalar(filtra_elementi(select(func.count(Documento.id)).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value), utente, Documento)) or 0),
             }
     except Exception:  # noqa: BLE001
         return {}
@@ -298,7 +337,7 @@ def render(request: Request, nome: str, utente: User | None = None, **contesto: 
     settings = get_settings()
     messaggi = request.session.pop("flash", []) if "session" in request.scope else []
     if utente is not None and "conteggi_menu" not in contesto:
-        contesto["conteggi_menu"] = _conteggi_menu()
+        contesto["conteggi_menu"] = _conteggi_menu(utente.id)
     contesto.update(
         {
             "request": request,

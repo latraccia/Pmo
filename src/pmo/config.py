@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PMO_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- Applicazione ---------------------------------------------------------------------------
-    app_name: str = "PMO La Traccia"
+    app_name: str = "PANificator 360"
     base_url: str = "http://localhost:8000"
     secret_key: str = "cambiami-in-produzione"
     encryption_key: str | None = None  # chiave Fernet (base64, 32 byte) per cifrare i token Google
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     allowed_domains: ListaCSV = Field(default_factory=lambda: ["latraccia.it"])
     admin_emails: ListaCSV = Field(default_factory=list)
-    gmail_send_scope: bool = False  # richiede anche lo scope gmail.send (per inviare il digest dalla casella)
+    gmail_send_scope: bool = False  # richiede anche lo scope gmail.send (per inviare le notifiche email dalla casella)
 
     # --- Sincronizzazione -----------------------------------------------------------------------
     sync_window_days: int = 120  # finestra iniziale di importazione della posta
@@ -66,7 +66,6 @@ class Settings(BaseSettings):
     digest_enabled: bool = True
     digest_hour: int = 8
     digest_minute: int = 0
-    digest_recipients: ListaCSV = Field(default_factory=list)  # se vuoto: tutti gli utenti attivi
 
     # --- SMTP (alternativa all'invio via Gmail) -------------------------------------------------
     smtp_host: str | None = None
@@ -76,7 +75,7 @@ class Settings(BaseSettings):
     smtp_from: str | None = None
     smtp_starttls: bool = True
 
-    @field_validator("allowed_domains", "admin_emails", "internal_domains", "digest_recipients", mode="before")
+    @field_validator("allowed_domains", "admin_emails", "internal_domains", mode="before")
     @classmethod
     def _split_csv(cls, value):  # noqa: ANN001
         if isinstance(value, str):

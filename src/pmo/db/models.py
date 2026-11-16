@@ -1,7 +1,8 @@
 """Modello dati del PMO.
 
 Entità principali:
-- Account: casella Gmail/Drive collegata (token cifrati, segnalibri di sincronizzazione).
+- User, Team: le persone, con un ruolo ciascuna, raggruppate in team; i team decidono chi vede quali pratiche.
+- Account: casella Gmail/Drive collegata (token cifrati, segnalibri di sincronizzazione), personale o di team.
 - Pratica: la "commessa" seguita dalla stima alla fattura, con codice univoco PMO-AAAA-NNNN.
 - Evento: cronologia della pratica (ogni evento punta alla fonte: mail, documento, utente, sistema).
 - Messaggio / Documento: elementi importati da Gmail e Drive, classificati e collegati alle pratiche.
@@ -16,12 +17,14 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Column,
     Date,
     ForeignKey,
     Index,
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
@@ -205,13 +208,36 @@ class TipoDocumento(enum.StrEnum):
 # ---------------------------------------------------------------------------------------------
 
 
+team_membri = Table(
+    "team_membri",
+    Base.metadata,
+    Column("team_id", ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Team(Base):
+    """Gruppo di persone che seguono insieme un insieme di pratiche (e, se serve, una casella condivisa)."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(120), unique=True)
+    descrizione: Mapped[str] = mapped_column(Text, default="")
+    attivo: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+    membri: Mapped[list[User]] = relationship(secondary=team_membri, back_populates="teams", order_by="User.nome")
+
+
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     nome: Mapped[str] = mapped_column(String(255), default="")
-    ruolo: Mapped[str] = mapped_column(String(32), default="membro")  # admin | membro
+    # amministratore | direzione | amministrazione | responsabile | commerciale | operativo (vedi pmo.permessi)
+    ruolo: Mapped[str] = mapped_column(String(32), default="operativo")
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
     google_sub: Mapped[str | None] = mapped_column(String(64))
     riceve_digest: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -219,10 +245,11 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
     accounts: Mapped[list[Account]] = relationship(back_populates="owner")
+    teams: Mapped[list[Team]] = relationship(secondary=team_membri, back_populates="membri", order_by="Team.nome")
 
     @property
     def is_admin(self) -> bool:
-        return self.ruolo == "admin"
+        return self.ruolo in ("amministratore", "admin")  # "admin": valore precedente alla migrazione 0002
 
 
 class Account(Base):
@@ -234,6 +261,7 @@ class Account(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(255), default="")
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), index=True)  # casella di team
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
     token_cifrato: Mapped[str | None] = mapped_column(Text)  # JSON cifrato con Fernet
     scopes: Mapped[list] = mapped_column(JSONType, default=list)
@@ -250,6 +278,7 @@ class Account(Base):
     updated_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner: Mapped[User | None] = relationship(back_populates="accounts")
+    team: Mapped[Team | None] = relationship()
     watched_folders: Mapped[list[WatchedFolder]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
@@ -290,11 +319,44 @@ class Cliente(Base):
     alias: Mapped[list] = mapped_column(JSONType, default=list)
     domini: Mapped[list] = mapped_column(JSONType, default=list)
     tipo: Mapped[str] = mapped_column(String(32), default="altro")  # sanita | pa | partner | altro
+    ragione_sociale: Mapped[str] = mapped_column(String(255), default="")
+    partita_iva: Mapped[str] = mapped_column(String(20), default="")
+    codice_fiscale: Mapped[str] = mapped_column(String(20), default="")
+    indirizzo: Mapped[str] = mapped_column(String(255), default="")
+    citta: Mapped[str] = mapped_column(String(120), default="")
+    telefono: Mapped[str] = mapped_column(String(50), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    pec: Mapped[str] = mapped_column(String(255), default="")
+    codice_oracle: Mapped[str] = mapped_column(String(50), default="")  # codice nel gestionale aziendale
+    codice_vte: Mapped[str] = mapped_column(String(50), default="")  # identificativo nel CRM VTE
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"))  # team di riferimento
     note: Mapped[str] = mapped_column(Text, default="")
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
 
     pratiche: Mapped[list[Pratica]] = relationship(back_populates="cliente")
+    team: Mapped[Team | None] = relationship()
+    contatti: Mapped[list[ContattoCliente]] = relationship(
+        back_populates="cliente", cascade="all, delete-orphan", order_by="ContattoCliente.nome"
+    )
+
+
+class ContattoCliente(Base):
+    """Referente di un cliente: il suo indirizzo aiuta anche a riconoscere le mail del cliente."""
+
+    __tablename__ = "contatti_cliente"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cliente_id: Mapped[int] = mapped_column(ForeignKey("clienti.id", ondelete="CASCADE"), index=True)
+    nome: Mapped[str] = mapped_column(String(255))
+    ruolo: Mapped[str] = mapped_column(String(120), default="")
+    email: Mapped[str] = mapped_column(String(255), default="", index=True)
+    telefono: Mapped[str] = mapped_column(String(50), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    attivo: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+    cliente: Mapped[Cliente] = relationship(back_populates="contatti")
 
 
 class Prodotto(Base):
@@ -331,6 +393,8 @@ class Pratica(Base):
     origine: Mapped[str] = mapped_column(String(16), default="manuale")  # manuale | ai | tag
     priorita: Mapped[str] = mapped_column(String(16), default="media")  # alta | media | bassa
     responsabile_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    sostituto_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), index=True)
     account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
     importo_stima: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     importo_offerta: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
@@ -351,6 +415,8 @@ class Pratica(Base):
     cliente: Mapped[Cliente | None] = relationship(back_populates="pratiche")
     prodotto: Mapped[Prodotto | None] = relationship(back_populates="pratiche")
     responsabile: Mapped[User | None] = relationship(foreign_keys=[responsabile_user_id])
+    sostituto: Mapped[User | None] = relationship(foreign_keys=[sostituto_user_id])
+    team: Mapped[Team | None] = relationship()
     eventi: Mapped[list[Evento]] = relationship(
         back_populates="pratica", cascade="all, delete-orphan", order_by="Evento.data_evento"
     )

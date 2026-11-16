@@ -18,15 +18,16 @@ from pmo.connectors.google_oauth import (
     salva_token,
     url_collega_casella,
 )
-from pmo.db.models import Account, SyncRun, User, WatchedFolder
+from pmo.db.models import Account, SyncRun, Team, User, WatchedFolder
+from pmo.permessi import Azione, casella_visibile, filtra_caselle, puo
 from pmo.services.sync import account_in_sincronizzazione, esegui_regole_tutto, sincronizza_account
 from pmo.web.deps import (
-    admin_richiesto,
     flash,
     get_db,
     pagina_per,
     redirect,
     render,
+    richiede,
     utente_corrente,
     verifica_csrf,
 )
@@ -35,21 +36,25 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _carica(session: Session, account_id: int, utente: User) -> Account:
+def _carica(session: Session, account_id: int, utente: User, *, modifica: bool = False) -> Account:
+    """La casella, se l'utente la vede (propria o del suo team). Per modificarla bisogna esserne il proprietario
+    oppure poter gestire tutte le caselle."""
     account = session.get(Account, account_id)
-    if account is None:
+    if account is None or not casella_visibile(account, utente):
         raise HTTPException(status_code=404, detail="Casella non trovata")
-    if not utente.is_admin and account.owner_user_id != utente.id:
-        raise HTTPException(status_code=403, detail="Casella di un altro utente")
+    if modifica and account.owner_user_id != utente.id and not puo(utente, Azione.GESTIRE_CASELLE):
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore può modificare la casella")
     return account
 
 
 @router.get("/caselle")
-def elenco(request: Request, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def elenco(request: Request, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
     settings = get_settings()
-    accounts = session.scalars(select(Account).options(selectinload(Account.watched_folders), selectinload(Account.owner)).order_by(Account.email)).all()
-    if not utente.is_admin:
-        accounts = [a for a in accounts if a.owner_user_id == utente.id]
+    accounts = session.scalars(
+        filtra_caselle(select(Account), utente)
+        .options(selectinload(Account.watched_folders), selectinload(Account.owner), selectinload(Account.team))
+        .order_by(Account.email)
+    ).all()
     run_per_account: dict[int, list[SyncRun]] = {}
     for run in session.scalars(select(SyncRun).where(SyncRun.account_id.isnot(None)).order_by(SyncRun.started_at.desc()).limit(60)).all():
         lista = run_per_account.setdefault(run.account_id, [])
@@ -63,6 +68,8 @@ def elenco(request: Request, session: Session = Depends(get_db), utente: User = 
         run_per_account=run_per_account,
         google=settings.google_configured,
         in_sync={a.id: account_in_sincronizzazione(a.id) for a in accounts},
+        teams=session.scalars(select(Team).where(Team.attivo.is_(True)).order_by(Team.nome)).all() if puo(utente, Azione.GESTIRE_CASELLE) else [],
+        modificabili={a.id for a in accounts if a.owner_user_id == utente.id or puo(utente, Azione.GESTIRE_CASELLE)},
     )
 
 
@@ -78,7 +85,7 @@ def collega(request: Request, login_hint: str = Form(""), utente: User = Depends
 
 
 @router.get("/caselle/callback")
-def callback(request: Request, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def callback(request: Request, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
     state = request.session.pop("oauth_state_account", None)
     if not state or request.query_params.get("state") != state:
         flash(request, "Sessione OAuth non valida: riprovare.", "errore")
@@ -119,21 +126,26 @@ def modifica(
     sync_gmail: str = Form(""),
     sync_drive: str = Form(""),
     attivo: str = Form(""),
-    session: Session = Depends(get_db),
+    team_id: str | None = Form(None),
+    session: Session = Depends(get_db, scope="function"),
     utente: User = Depends(utente_corrente),
 ):
-    account = _carica(session, account_id, utente)
+    account = _carica(session, account_id, utente, modifica=True)
     account.query_filter = query_filter.strip()[:500]
     account.sync_gmail = bool(sync_gmail)
     account.sync_drive = bool(sync_drive)
     account.attivo = bool(attivo)
+    # Solo chi gestisce tutte le caselle le assegna a un team (il campo, per gli altri, non è nel modulo).
+    if team_id is not None and puo(utente, Azione.GESTIRE_CASELLE):
+        team = session.get(Team, int(team_id)) if team_id.strip().isdigit() else None
+        account.team_id = team.id if team is not None else None
     flash(request, "Impostazioni della casella aggiornate.")
     return redirect("/caselle")
 
 
 @router.post("/caselle/{account_id}/cartelle", dependencies=[Depends(verifica_csrf)])
-def aggiungi_cartella(request: Request, account_id: int, cartella: str = Form(...), ricorsivo: str = Form("1"), session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    account = _carica(session, account_id, utente)
+def aggiungi_cartella(request: Request, account_id: int, cartella: str = Form(...), ricorsivo: str = Form("1"), session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
+    account = _carica(session, account_id, utente, modifica=True)
     folder_id = estrai_folder_id(cartella)
     if not folder_id:
         flash(request, "Indicare l'ID o l'URL della cartella.", "errore")
@@ -154,8 +166,8 @@ def aggiungi_cartella(request: Request, account_id: int, cartella: str = Form(..
 
 
 @router.post("/caselle/{account_id}/cartelle/{folder_id}/elimina", dependencies=[Depends(verifica_csrf)])
-def elimina_cartella(request: Request, account_id: int, folder_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    account = _carica(session, account_id, utente)
+def elimina_cartella(request: Request, account_id: int, folder_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
+    account = _carica(session, account_id, utente, modifica=True)
     folder = session.get(WatchedFolder, folder_id)
     if folder is None or folder.account_id != account.id:
         raise HTTPException(status_code=404)
@@ -180,7 +192,7 @@ def sync(
     background: BackgroundTasks,
     completa: str = Form(""),
     giorni: str = Form(""),
-    session: Session = Depends(get_db),
+    session: Session = Depends(get_db, scope="function"),
     utente: User = Depends(utente_corrente),
 ):
     account = _carica(session, account_id, utente)
@@ -196,8 +208,8 @@ def sync(
 
 
 @router.post("/caselle/{account_id}/scollega", dependencies=[Depends(verifica_csrf)])
-def scollega(request: Request, account_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
-    account = _carica(session, account_id, utente)
+def scollega(request: Request, account_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
+    account = _carica(session, account_id, utente, modifica=True)
     account.token_cifrato = None
     account.scopes = []
     account.attivo = False
@@ -206,7 +218,7 @@ def scollega(request: Request, account_id: int, session: Session = Depends(get_d
 
 
 @router.get("/caselle/{account_id}/esecuzioni")
-def esecuzioni(request: Request, account_id: int, session: Session = Depends(get_db), utente: User = Depends(utente_corrente)):
+def esecuzioni(request: Request, account_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(utente_corrente)):
     account = _carica(session, account_id, utente)
     filtro = SyncRun.account_id == account.id
     conteggi = {
@@ -220,7 +232,7 @@ def esecuzioni(request: Request, account_id: int, session: Session = Depends(get
 
 
 @router.post("/caselle/{account_id}/elimina", dependencies=[Depends(verifica_csrf)])
-def elimina(request: Request, account_id: int, session: Session = Depends(get_db), utente: User = Depends(admin_richiesto)):
+def elimina(request: Request, account_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.GESTIRE_CASELLE))):
     account = session.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=404)

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, area, selezione, spunta, fase, da_confermare, csrf with context %}
+{% block titolo %}{{ cliente.nome }} · Clienti · {{ app_name }}{% endblock %}
+{% block contenuto %}
+{%- set modificabile = puo(utente, 'gestire_clienti') -%}
+{%- set etichette_tipo = dict(tipi_cliente) -%}
+{%- set attivi = cliente.contatti | selectattr('attivo') | list -%}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Cliente", etichette_tipo.get(cliente.tipo, cliente.tipo)) }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ pratiche | length }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">pratiche<br>visibili</span>
+      </p>
+      <dl class="tr-facts">
+        <div><dt>P.IVA</dt><dd>{{ cliente.partita_iva or '-' }}</dd></div>
+        <div><dt>Codice Oracle</dt><dd>{{ cliente.codice_oracle or '-' }}</dd></div>
+        <div><dt>Codice VTE</dt><dd>{{ cliente.codice_vte or '-' }}</dd></div>
+        <div><dt>Team</dt><dd>{{ cliente.team.nome if cliente.team else '-' }}</dd></div>
+      </dl>
+    </aside>
+    <div class="tr-intro__main">
+      <h1 class="pmo-titolo">{{ cliente.nome }}</h1>
+      <p class="tr-intro__lead">{{ cliente.ragione_sociale or 'Ragione sociale da indicare' }}{% if cliente.citta %} · {{ cliente.citta }}{% endif %}</p>
+      {% if not cliente.attivo %}<div class="pmo-scheda__stati pmo-mt-5"><span class="tr-status">Disattivato</span></div>{% endif %}
+      <div class="tr-btn-group">
+        <a class="tr-btn tr-btn--quiet" href="/clienti"><span>Tutti i clienti</span></a>
+        <a class="tr-btn tr-btn--secondary" href="/pratiche?cliente_id={{ cliente.id }}&tutte=1"><span>Pratiche del cliente</span></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="tr-card pmo-section" aria-labelledby="t-anagrafica">
+  <div class="tr-card__head"><h2 class="tr-card__title" id="t-anagrafica">L'<em>anagrafica</em></h2></div>
+  {% if modificabile %}
+  <form method="post" action="/clienti/{{ cliente.id }}">
+    {{ csrf() }}
+    <div class="pmo-stack">
+      <div class="pmo-grid">
+        {{ campo("nome", "Nome breve", cliente.nome, obbligatorio=true) }}
+        {{ campo("ragione_sociale", "Ragione sociale", cliente.ragione_sociale) }}
+        {% call selezione("tipo", "Tipo") %}{% for v, t in tipi_cliente %}<option value="{{ v }}" {{ 'selected' if cliente.tipo == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+        {{ campo("partita_iva", "Partita IVA", cliente.partita_iva) }}
+        {{ campo("codice_fiscale", "Codice fiscale", cliente.codice_fiscale) }}
+        {{ campo("indirizzo", "Indirizzo", cliente.indirizzo) }}
+        {{ campo("citta", "Città", cliente.citta) }}
+        {{ campo("telefono", "Telefono", cliente.telefono) }}
+        {{ campo("email", "Email", cliente.email, tipo="email") }}
+        {{ campo("pec", "PEC", cliente.pec, tipo="email") }}
+        {{ campo("codice_oracle", "Codice nel gestionale (Oracle)", cliente.codice_oracle) }}
+        {{ campo("codice_vte", "Codice nel CRM (VTE)", cliente.codice_vte) }}
+        {% call selezione("team_id", "Team di riferimento") %}<option value="">Nessuno</option>{% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if cliente.team_id == t.id }}>{{ t.nome }}</option>{% endfor %}{% endcall %}
+      </div>
+      <div class="pmo-grid">
+        {{ campo("alias", "Alias", cliente.alias | join(', '), aiuto="Altri nomi con cui compare nelle mail, separati da virgola") }}
+        {{ campo("domini", "Domini email", cliente.domini | join(', '), aiuto="Separati da virgola") }}
+      </div>
+      {{ area("note", "Note", cliente.note) }}
+      <div class="pmo-checks">{{ spunta("attivo", "Cliente attivo", cliente.attivo) }}</div>
+    </div>
+    <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva anagrafica</span></button></div>
+  </form>
+  {% else %}
+  <div class="tr-datatable">
+    {% for etichetta, valore in [('Ragione sociale', cliente.ragione_sociale), ('Partita IVA', cliente.partita_iva), ('Codice fiscale', cliente.codice_fiscale), ('Indirizzo', cliente.indirizzo), ('Città', cliente.citta), ('Telefono', cliente.telefono), ('Email', cliente.email), ('PEC', cliente.pec), ('Alias', cliente.alias | join(', ')), ('Domini email', cliente.domini | join(', '))] %}
+    <div class="tr-datatable__row"><span class="tr-datatable__label">{{ etichetta }}</span><span class="tr-datatable__value">{{ valore or '-' }}</span></div>
+    {% endfor %}
+  </div>
+  {% if cliente.note %}<p class="tr-body pmo-text pmo-mt-5">{{ cliente.note }}</p>{% endif %}
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" id="contatti" aria-labelledby="t-contatti">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-contatti">I <em>referenti</em></h2>
+    <span class="tr-card__aside">{{ attivi | length }} attivi</span>
+  </div>
+  {% if cliente.contatti %}
+  <div class="pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Nome</th><th>Ruolo</th><th>Email</th><th>Telefono</th>{% if modificabile %}<th>Attivo</th><th><span class="tr-sr-only">Azioni</span></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for k in cliente.contatti %}
+      {% if modificabile %}
+      <tr><form method="post" action="/clienti/{{ cliente.id }}/contatti">{{ csrf() }}<input type="hidden" name="contatto_id" value="{{ k.id }}">
+        <td>{{ campo("nome", "Nome", k.nome, compatto=true, affiancata=false, obbligatorio=true) }}</td>
+        <td>{{ campo("ruolo", "Ruolo", k.ruolo, compatto=true, affiancata=false) }}</td>
+        <td>{{ campo("email", "Email", k.email, tipo="email", compatto=true, affiancata=false) }}</td>
+        <td>{{ campo("telefono", "Telefono", k.telefono, compatto=true, affiancata=false) }}</td>
+        <td>{{ spunta("attivo", "Referente attivo", k.attivo, visibile=false) }}</td>
+        <td><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Salva</button></td>
+      </form></tr>
+      {% elif k.attivo %}
+      <tr><td>{{ k.nome }}</td><td>{{ k.ruolo or '-' }}</td><td>{% if k.email %}<a href="mailto:{{ k.email }}">{{ k.email }}</a>{% else %}-{% endif %}</td><td>{{ k.telefono or '-' }}</td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="tr-card__empty">Nessun referente</p>
+  {% endif %}
+  {% if modificabile %}
+  <details class="pmo-details pmo-mt-5">
+    <summary><span class="pmo-details__label">Aggiungi un referente</span></summary>
+    <form method="post" action="/clienti/{{ cliente.id }}/contatti" class="pmo-details__body">
+      {{ csrf() }}<input type="hidden" name="nuovo" value="1">
+      <div class="pmo-grid">
+        {{ campo("nome", "Nome", obbligatorio=true, id="nuovo-contatto-nome") }}
+        {{ campo("ruolo", "Ruolo", segnaposto="es. RUP, direttore sistemi informativi", id="nuovo-contatto-ruolo") }}
+        {{ campo("email", "Email", tipo="email", id="nuovo-contatto-email") }}
+        {{ campo("telefono", "Telefono", id="nuovo-contatto-telefono") }}
+      </div>
+      <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi</span></button></div>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-pratiche-cliente">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-pratiche-cliente">Le <em>pratiche</em></h2>
+    <span class="tr-card__aside">solo quelle che puoi vedere</span>
+  </div>
+  {% if pratiche %}
+  <div class="pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Pratica</th><th>Fase</th><th>Team</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
+    <tbody>
+    {% for p in pratiche %}
+      <tr>
+        <td><a class="pmo-title-cell" href="/pratiche/{{ p.id }}">{{ p.titolo }}</a><p class="pmo-dato">{{ p.codice }}</p></td>
+        <td>{{ fase(p.stato) }}{% if p.stato_verifica == 'proposto' %} {{ da_confermare("Proposta IA") }}{% endif %}</td>
+        <td>{{ p.team.nome if p.team else '-' }}</td>
+        <td>{{ (p.responsabile.nome or p.responsabile.email) if p.responsabile else '-' }}</td>
+        <td>{{ p.ultimo_evento_at | data }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="tr-card__empty">Nessuna pratica visibile per questo cliente</p>
+  {% endif %}
+</section>
+{% endblock %}

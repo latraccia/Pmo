@@ -26,8 +26,8 @@
 </svg>
 {% block corpo %}
 {% set percorso = request.url.path %}
-{% set voci = [("/", "Cruscotto", none), ("/pratiche", "Pratiche", none), ("/solleciti", "Solleciti", "solleciti"), ("/revisione", "Revisione", "revisione"), ("/caselle", "Caselle", none)] %}
-{% if utente and utente.is_admin %}{% set voci = voci + [("/impostazioni", "Impostazioni", none)] %}{% endif %}
+{% set voci = [("/", "Cruscotto", none), ("/pratiche", "Pratiche", none), ("/clienti", "Clienti", none), ("/solleciti", "Solleciti", "solleciti"), ("/revisione", "Revisione", "revisione"), ("/caselle", "Caselle", none)] %}
+{% if utente and (puo(utente, 'configurare') or puo(utente, 'gestire_utenti')) %}{% set voci = voci + [("/impostazioni", "Impostazioni", none)] %}{% endif %}
 <div class="pmo-app">
   {#- Il menu laterale: marchio e prodotto in testa, le voci, l'utente in fondo. -#}
   <aside class="pmo-side">
@@ -36,7 +36,7 @@
         <img class="tr-brandmark__logo" src="/static/ds/assets/logo-traccia-mark.svg" alt="">
         <span class="tr-brandmark__wordmark">traccia</span>
       </a>
-      <span class="tr-clientmark__product">PMO · Pratiche</span>
+      <span class="tr-clientmark__product">{{ app_name }}</span>
     </div>
     {% if utente %}
     <nav class="pmo-side__nav" aria-label="Sezioni">
@@ -49,7 +49,7 @@
       {% endfor %}
     </nav>
     <div class="pmo-side__utente">
-      <span class="tr-mono tr-mono--muted">{{ utente.nome or utente.email }}</span>
+      <span class="tr-mono tr-mono--muted" title="{{ utente.email }} · {{ ETICHETTE_RUOLO.get(utente.ruolo, utente.ruolo) }}">{{ utente.nome or utente.email }}</span>
       <form method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="tr-btn tr-btn--neutral tr-btn--sm" type="submit">Esci</button>
@@ -73,7 +73,7 @@
         </span>
         <span class="tr-footer__contacts">
           <a class="tr-footer__contact" href="mailto:info@latraccia.it"><span class="tr-dot"></span>info@latraccia.it</a>
-          <span class="tr-footer__ref">PMO</span>
+          <span class="tr-footer__ref">{{ app_name }}</span>
         </span>
       </footer>
     </div>

@@ -6,6 +6,9 @@ strumenti sono di sola lettura; le azioni che modificano i dati si abilitano esp
 
 Oggetti, mittenti e testi di mail e documenti arrivano dall'esterno: vengono restituiti troncati e il server
 avverte Claude di trattarli come dati, mai come istruzioni.
+
+Il server agisce per conto di un utente del PMO (`utente_email`, oppure il primo di PMO_ADMIN_EMAILS) e ne applica
+ruolo e team come l'interfaccia web: vede solo ciò che quell'utente vede e scrive solo ciò che il suo ruolo consente.
 """
 
 from __future__ import annotations
@@ -44,6 +47,16 @@ from pmo.db.models import (
     User,
 )
 from pmo.db.session import session_scope
+from pmo.permessi import (
+    Azione,
+    filtra_caselle,
+    filtra_elementi,
+    filtra_pratiche,
+    pratica_visibile,
+    puo,
+    puo_passare_a,
+    vede_tutto,
+)
 from pmo.rules.engine import ordina_gravita
 from pmo.services import pratiche as svc
 
@@ -53,7 +66,7 @@ LIMITE_MASSIMO = 100
 SOLA_LETTURA = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 TIPI_NOTA = ("nota", "promemoria", "riunione", "richiesta_informazioni", "altro")
 
-ISTRUZIONI = """PMO La Traccia: pratiche della Cooperativa EDP La Traccia (stima, offerta, ordine, specifiche, sviluppo, \
+ISTRUZIONI = """PANificator 360: pratiche della Cooperativa EDP La Traccia (stima, offerta, ordine, specifiche, sviluppo, \
 consegna, fatturazione) ricostruite da Gmail e Google Drive. Ogni pratica ha un codice PMO-AAAA-NNNN.
 
 - `stato_sistema`: colpo d'occhio su pratiche, solleciti, elementi da verificare e caselle.
@@ -100,11 +113,16 @@ def _contiene(colonna, testo: str):  # noqa: ANN001, ANN202
     return func.lower(colonna).contains(testo.lower(), autoescape=True)
 
 
-def _carica_pratica(session: Session, codice: str) -> Pratica:
+def _carica_pratica(session: Session, codice: str, utente: User) -> Pratica:
     pratica = svc.trova_per_codice(session, codice.strip().strip("[]"))
-    if pratica is None:
+    if pratica is None or not pratica_visibile(session, pratica, utente):
         raise ToolError(f"Pratica {codice} non trovata. Usa elenca_pratiche per cercare il codice corretto.")
     return pratica
+
+
+def _richiedi(utente: User, azione: Azione) -> None:
+    if not puo(utente, azione):
+        raise ToolError(f"Il ruolo di {utente.email} ({utente.ruolo}) non consente questa azione.")
 
 
 def _giorni_a(scadenza: date | None) -> int | None:
@@ -200,11 +218,16 @@ def _documento_dict(d: Documento) -> dict[str, Any]:
     }
 
 
-def _utente_id(session: Session, email: str | None) -> int | None:
-    """Utente a cui attribuire le modifiche fatte via MCP (cronologia e controlli di revisione)."""
+def _carica_utente(session: Session, email: str | None) -> User:
+    """L'utente per conto del quale lavora il server: le sue regole di visibilità e i suoi permessi valgono qui."""
     if not email:
-        return None
-    return session.scalar(select(User.id).where(User.email == email.lower()))
+        raise ToolError(
+            "Nessun utente indicato: avvia il server con `pmo mcp --utente EMAIL` oppure imposta PMO_ADMIN_EMAILS."
+        )
+    utente = session.scalar(select(User).where(User.email == email.strip().lower()))
+    if utente is None or not utente.attivo:
+        raise ToolError(f"L'utente {email} non esiste o è disattivato in PANificator 360: accedi una volta all'interfaccia web o chiedi a un amministratore.")
+    return utente
 
 
 # --- server ---------------------------------------------------------------------------------------
@@ -218,34 +241,44 @@ def crea_server(
         utente_email = settings.admin_emails[0]
     server = MCPServer(
         "pmo-la-traccia",
-        title="PMO La Traccia",
+        title="PANificator 360",
         instructions=ISTRUZIONI + "\n\n" + (ISTRUZIONI_SCRITTURA if scrittura else ISTRUZIONI_LETTURA),
     )
 
     @server.tool(annotations=SOLA_LETTURA)
     def stato_sistema() -> dict[str, Any]:
-        """Riepilogo: pratiche per stato, solleciti aperti, messaggi e documenti da verificare, caselle collegate e ultime sincronizzazioni."""
+        """Riepilogo: pratiche per stato, solleciti aperti, messaggi e documenti da verificare, caselle collegate e ultime sincronizzazioni (solo ciò che l'utente collegato può vedere)."""
         with session_scope() as session:
+            utente = _carica_utente(session, utente_email)
+            visibili = filtra_pratiche(select(Pratica.id), utente)
 
-            def conteggio(colonna) -> dict[str, int]:  # noqa: ANN001
-                return {k: n for k, n in session.execute(select(colonna, func.count()).group_by(colonna)).all()}
+            def conteggio(colonna, filtra) -> dict[str, int]:  # noqa: ANN001
+                return {k: n for k, n in session.execute(filtra(select(colonna, func.count())).group_by(colonna)).all()}
 
             solleciti_aperti = dict(
                 session.execute(
                     select(Sollecito.gravita, func.count())
-                    .where(Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]))
+                    .where(
+                        Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]),
+                        Sollecito.pratica_id.in_(visibili),
+                    )
                     .group_by(Sollecito.gravita)
                 ).all()
             )
-            ultime = session.scalars(select(SyncRun).order_by(SyncRun.id.desc()).limit(6)).all()
+            caselle = session.scalars(filtra_caselle(select(Account), utente)).all()
+            esecuzioni = select(SyncRun).order_by(SyncRun.id.desc()).limit(6)
+            if not vede_tutto(utente):
+                esecuzioni = esecuzioni.where(SyncRun.account_id.in_([a.id for a in caselle] or [0]))
+            ultime = session.scalars(esecuzioni).all()
             return {
-                "pratiche_per_stato": conteggio(Pratica.stato),
+                "utente": {"email": utente.email, "ruolo": utente.ruolo, "team": [t.nome for t in utente.teams]},
+                "pratiche_per_stato": conteggio(Pratica.stato, lambda q: filtra_pratiche(q, utente)),
                 "pratiche_proposte_da_confermare": session.scalar(
-                    select(func.count()).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value)
+                    filtra_pratiche(select(func.count(Pratica.id)).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value), utente)
                 ),
                 "solleciti_aperti_per_gravita": solleciti_aperti,
-                "messaggi_per_stato": conteggio(Messaggio.stato),
-                "documenti_per_stato": conteggio(Documento.stato),
+                "messaggi_per_stato": conteggio(Messaggio.stato, lambda q: filtra_elementi(q, utente, Messaggio)),
+                "documenti_per_stato": conteggio(Documento.stato, lambda q: filtra_elementi(q, utente, Documento)),
                 "caselle": [
                     {
                         "email": a.email,
@@ -254,7 +287,7 @@ def crea_server(
                         "stato": a.last_sync_status,
                         "cartelle_drive": len(a.watched_folders),
                     }
-                    for a in session.scalars(select(Account)).all()
+                    for a in caselle
                 ],
                 "ultime_esecuzioni": [
                     {
@@ -297,7 +330,8 @@ def crea_server(
     ) -> dict[str, Any]:
         """Elenca le pratiche, dalla più recente per ultimo evento. `testo` cerca in codice, titolo, descrizione e nome del cliente; `cliente` e `prodotto` filtrano per nome o alias (parziale); `stato` è uno stato esatto (vedi catalogo); `solo_attive` esclude chiuse e annullate; `scadenza_entro_giorni` mostra le scadenze entro quel numero di giorni (anche già passate). Le pratiche scartate si vedono solo con verifica="rifiutato"."""
         with session_scope() as session:
-            query = select(Pratica).options(
+            utente = _carica_utente(session, utente_email)
+            query = filtra_pratiche(select(Pratica), utente).options(
                 selectinload(Pratica.cliente), selectinload(Pratica.prodotto), selectinload(Pratica.responsabile)
             )
             if verifica:
@@ -351,7 +385,7 @@ def crea_server(
     def dettaglio_pratica(codice: str, max_eventi: int = 60, max_elementi: int = 30) -> dict[str, Any]:
         """Dettaglio di una pratica (ad esempio PMO-2026-0001): dati, cronologia degli eventi con link alle fonti, solleciti, messaggi e documenti collegati (i più recenti, in numero limitato)."""
         with session_scope() as session:
-            pratica = _carica_pratica(session, codice)
+            pratica = _carica_pratica(session, codice, _carica_utente(session, utente_email))
             solleciti = [s for s in pratica.solleciti if s.stato in (StatoSollecito.APERTO, StatoSollecito.IN_CARICO)]
             eventi = sorted(pratica.eventi, key=lambda e: e.data_evento)[-_limite(max_eventi, 300) :]
             messaggi = sorted(pratica.messaggi, key=lambda m: m.data, reverse=True)[: _limite(max_elementi)]
@@ -399,8 +433,11 @@ def crea_server(
     ) -> dict[str, Any]:
         """Elenca i solleciti automatici, dal più grave. Con stato="aperti" (predefinito) mostra quelli aperti o in carico, esclusi i silenziati. `regola` è il codice della regola (ad esempio ordine_senza_specifiche)."""
         with session_scope() as session:
-            query = select(Sollecito).options(
-                selectinload(Sollecito.pratica).selectinload(Pratica.cliente), selectinload(Sollecito.assegnato)
+            utente = _carica_utente(session, utente_email)
+            query = (
+                select(Sollecito)
+                .options(selectinload(Sollecito.pratica).selectinload(Pratica.cliente), selectinload(Sollecito.assegnato))
+                .where(Sollecito.pratica_id.in_(filtra_pratiche(select(Pratica.id), utente)))
             )
             if stato == "aperti":
                 query = query.where(Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]))
@@ -427,8 +464,9 @@ def crea_server(
     ) -> dict[str, Any]:
         """Ciò che l'IA ha proposto e una persona deve ancora verificare: "pratiche" (proposte da confermare o scartare), "messaggi" e "documenti" da rivedere, "errori" (messaggi non classificabili)."""
         with session_scope() as session:
+            utente = _carica_utente(session, utente_email)
             if scheda == "pratiche":
-                base = select(Pratica).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value)
+                base = filtra_pratiche(select(Pratica).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value), utente)
                 totale = session.scalar(select(func.count()).select_from(base.subquery()))
                 righe = session.scalars(
                     base.options(
@@ -450,7 +488,7 @@ def crea_server(
                     for p in righe
                 ]
             elif scheda == "documenti":
-                base = select(Documento).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value)
+                base = filtra_elementi(select(Documento).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value), utente, Documento)
                 totale = session.scalar(select(func.count()).select_from(base.subquery()))
                 righe = session.scalars(
                     base.options(selectinload(Documento.pratica))
@@ -460,7 +498,7 @@ def crea_server(
                 elementi = [_documento_dict(d) for d in righe]
             else:
                 stato = StatoMessaggio.DA_RIVEDERE if scheda == "messaggi" else StatoMessaggio.ERRORE
-                base = select(Messaggio).where(Messaggio.stato == stato.value)
+                base = filtra_elementi(select(Messaggio).where(Messaggio.stato == stato.value), utente, Messaggio)
                 totale = session.scalar(select(func.count()).select_from(base.subquery()))
                 righe = session.scalars(
                     base.options(selectinload(Messaggio.pratica)).order_by(Messaggio.data.desc()).limit(_limite(limite))
@@ -472,7 +510,8 @@ def crea_server(
     def cerca_messaggi(testo: str, pratica: str | None = None, limite: int = 20) -> dict[str, Any]:
         """Cerca nelle mail importate (oggetto, mittente, anteprima e testo), dalla più recente. Restituisce solo oggetto, mittente, anteprima e link a Gmail, non il testo completo. `pratica` limita a una pratica (codice)."""
         with session_scope() as session:
-            query = select(Messaggio).options(selectinload(Messaggio.pratica)).where(
+            utente = _carica_utente(session, utente_email)
+            query = filtra_elementi(select(Messaggio), utente, Messaggio).options(selectinload(Messaggio.pratica)).where(
                 or_(
                     _contiene(Messaggio.subject, testo),
                     _contiene(Messaggio.from_email, testo),
@@ -482,7 +521,7 @@ def crea_server(
                 )
             )
             if pratica:
-                query = query.where(Messaggio.pratica_id == _carica_pratica(session, pratica).id)
+                query = query.where(Messaggio.pratica_id == _carica_pratica(session, pratica, utente).id)
             totale = session.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
             righe = session.scalars(query.order_by(Messaggio.data.desc()).limit(_limite(limite))).all()
             return {"totale": totale, "mostrati": len(righe), "messaggi": [_messaggio_dict(m) for m in righe]}
@@ -491,7 +530,8 @@ def crea_server(
     def cerca_documenti(testo: str, pratica: str | None = None, limite: int = 20) -> dict[str, Any]:
         """Cerca nei documenti di Google Drive importati (nome, percorso ed estratto di testo), dal più recente. `pratica` limita a una pratica (codice)."""
         with session_scope() as session:
-            query = select(Documento).options(selectinload(Documento.pratica)).where(
+            utente = _carica_utente(session, utente_email)
+            query = filtra_elementi(select(Documento), utente, Documento).options(selectinload(Documento.pratica)).where(
                 or_(
                     _contiene(Documento.nome, testo),
                     _contiene(Documento.percorso, testo),
@@ -499,7 +539,7 @@ def crea_server(
                 )
             )
             if pratica:
-                query = query.where(Documento.pratica_id == _carica_pratica(session, pratica).id)
+                query = query.where(Documento.pratica_id == _carica_pratica(session, pratica, utente).id)
             totale = session.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
             righe = session.scalars(query.order_by(Documento.modified_time.desc()).limit(_limite(limite))).all()
             return {"totale": totale, "mostrati": len(righe), "documenti": [_documento_dict(d) for d in righe]}
@@ -518,7 +558,9 @@ def crea_server(
     ) -> dict[str, Any]:
         """Aggiunge una nota alla cronologia di una pratica. Non cambia lo stato della pratica."""
         with session_scope() as session:
-            pratica = _carica_pratica(session, codice)
+            utente = _carica_utente(session, utente_email)
+            _richiedi(utente, Azione.ANNOTARE)
+            pratica = _carica_pratica(session, codice, utente)
             evento = svc.aggiungi_evento(
                 session,
                 pratica,
@@ -527,7 +569,7 @@ def crea_server(
                 descrizione=descrizione,
                 fonte_tipo=TipoFonte.MANUALE,
                 dati={"via": "mcp"},
-                created_by_user_id=_utente_id(session, utente_email),
+                created_by_user_id=utente.id,
                 aggiorna_stato=False,
             )
             return {"ok": True, "pratica": pratica.codice, "evento_id": evento.id, "titolo": evento.titolo}
@@ -552,14 +594,17 @@ def crea_server(
     ) -> dict[str, Any]:
         """Cambia manualmente lo stato di una pratica (registra un evento di cambio stato nella cronologia)."""
         with session_scope() as session:
-            pratica = _carica_pratica(session, codice)
+            utente = _carica_utente(session, utente_email)
+            if not puo_passare_a(utente, stato):
+                raise ToolError(f"Il ruolo di {utente.email} ({utente.ruolo}) non consente di portare una pratica in '{stato}'.")
+            pratica = _carica_pratica(session, codice, utente)
             vecchio = pratica.stato
             svc.cambia_stato(
                 session,
                 pratica,
                 stato,
                 motivo=(motivo + " " if motivo else "") + "[via MCP]",
-                user_id=_utente_id(session, utente_email),
+                user_id=utente.id,
             )
             return {"ok": True, "pratica": pratica.codice, "da": vecchio, "a": pratica.stato}
 
@@ -567,25 +612,27 @@ def crea_server(
     def conferma_pratica(codice: str) -> dict[str, Any]:
         """Conferma una pratica proposta dall'IA: diventa un dato verificato, i suoi eventi proposti con confidenza sufficiente vengono applicati e i suoi messaggi risultano classificati."""
         with session_scope() as session:
-            pratica = _carica_pratica(session, codice)
+            utente = _carica_utente(session, utente_email)
+            _richiedi(utente, Azione.CONFERMARE)
+            pratica = _carica_pratica(session, codice, utente)
             if pratica.stato_verifica != StatoVerifica.PROPOSTO:
                 raise ToolError(f"La pratica {pratica.codice} non è in attesa di conferma (verifica: {pratica.stato_verifica}).")
-            svc.conferma_pratica(
-                session, pratica, _utente_id(session, utente_email), soglia=settings.event_confidence_threshold
-            )
+            svc.conferma_pratica(session, pratica, utente.id, soglia=settings.event_confidence_threshold)
             return {"ok": True, "pratica": pratica.codice, "verifica": pratica.stato_verifica, "stato": pratica.stato}
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False))
     def scarta_pratica(codice: str) -> dict[str, Any]:
         """Scarta una pratica proposta dall'IA: viene annullata, i suoi solleciti eliminati e i suoi messaggi e documenti tornano in revisione. Funziona solo su pratiche ancora "proposte", mai su quelle confermate."""
         with session_scope() as session:
-            pratica = _carica_pratica(session, codice)
+            utente = _carica_utente(session, utente_email)
+            _richiedi(utente, Azione.CONFERMARE)
+            pratica = _carica_pratica(session, codice, utente)
             if pratica.stato_verifica != StatoVerifica.PROPOSTO:
                 raise ToolError(
                     f"La pratica {pratica.codice} non è una proposta (verifica: {pratica.stato_verifica}): "
                     "per le pratiche confermate usa cambia_stato_pratica."
                 )
-            svc.rifiuta_pratica(session, pratica, _utente_id(session, utente_email))
+            svc.rifiuta_pratica(session, pratica, utente.id)
             return {"ok": True, "pratica": pratica.codice, "verifica": pratica.stato_verifica, "stato": pratica.stato}
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False))
@@ -594,12 +641,14 @@ def crea_server(
     ) -> dict[str, Any]:
         """Aggiorna un sollecito: "prendi" (in carico a te), "risolvi", "silenzia" (per il numero di giorni indicato) o "riapri". Un sollecito risolto si riapre da solo se la condizione persiste al prossimo controllo."""
         with session_scope() as session:
+            utente = _carica_utente(session, utente_email)
+            _richiedi(utente, Azione.GESTIRE_SOLLECITI)
             sollecito = session.get(Sollecito, sollecito_id)
-            if sollecito is None:
+            if sollecito is None or not pratica_visibile(session, sollecito.pratica, utente):
                 raise ToolError(f"Sollecito {sollecito_id} non trovato. Usa elenca_solleciti per vedere gli id.")
             if azione == "prendi":
                 sollecito.stato = StatoSollecito.IN_CARICO
-                sollecito.assegnato_user_id = _utente_id(session, utente_email)
+                sollecito.assegnato_user_id = utente.id
             elif azione == "risolvi":
                 sollecito.stato = StatoSollecito.RISOLTO
                 sollecito.risolto_il = utcnow()
@@ -630,5 +679,5 @@ def scrittura_abilitata(esplicita: bool = False, ambiente: Mapping[str, str] | N
 
 def avvia(*, scrittura: bool = False, utente_email: str | None = None) -> None:
     """Avvia il server sul trasporto stdio (stdout è riservato al protocollo: i log vanno su stderr)."""
-    log.info("Server MCP PMO La Traccia in avvio (%s)", "lettura e scrittura" if scrittura else "sola lettura")
+    log.info("Server MCP PANificator 360 in avvio (%s)", "lettura e scrittura" if scrittura else "sola lettura")
     crea_server(scrittura=scrittura, utente_email=utente_email).run("stdio")

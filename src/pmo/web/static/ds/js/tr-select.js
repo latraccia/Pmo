@@ -429,6 +429,13 @@
     };
     this.panel.addEventListener('click', this.onPanelClick);
 
+    // Premere il mouse su una voce non deve togliere il fuoco al trigger: il blur chiuderebbe il pannello
+    // prima del click e la scelta andrebbe persa. Il campo di ricerca invece deve poter prendere il fuoco.
+    this.onPanelMouseDown = function (e) {
+      if (!self.searchInput || e.target !== self.searchInput) { e.preventDefault(); }
+    };
+    this.panel.addEventListener('mousedown', this.onPanelMouseDown);
+
     this.onPanelMove = function (e) {
       var li = e.target.closest ? e.target.closest('.tr-select__option') : null;
       if (li && li.getAttribute('aria-disabled') !== 'true') {
@@ -478,6 +485,7 @@
     this.trigger.removeEventListener('blur', this.onTriggerBlur);
     this.trigger.removeEventListener('keydown', this.onKeyDown);
     this.panel.removeEventListener('click', this.onPanelClick);
+    this.panel.removeEventListener('mousedown', this.onPanelMouseDown);
     this.panel.removeEventListener('pointermove', this.onPanelMove);
     this.native.removeEventListener('change', this.onNativeChange);
     if (this.searchInput) {

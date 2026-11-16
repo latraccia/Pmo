@@ -4,7 +4,7 @@
 {% block contenuto %}
 {#- L'indirizzo di questa pagina con i suoi filtri: il cambio di fase di una scheda torna qui. -#}
 {%- set ritorno = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') -%}
-{%- set filtrato = filtri.q or filtri.stato or filtri.cliente_id or filtri.prodotto_id or filtri.responsabile_id or filtri.verifica or filtri.tutte or filtri.azione -%}
+{%- set filtrato = filtri.q or filtri.stato or filtri.cliente_id or filtri.prodotto_id or filtri.responsabile_id or filtri.team_id or filtri.verifica or filtri.tutte or filtri.azione -%}
 {#- Il numero che riassume la pagina la apre; il testo e i filtri gli stanno accanto. -#}
 {#- La testata della pagina sta sul suo piano bianco, come ogni blocco di contenuto. -#}
 <div class="tr-panel">
@@ -29,7 +29,7 @@
       <h1 class="tr-h3 tr-intro__title">Tutte le <em>pratiche</em></h1>
       <p class="tr-intro__lead">Ogni pratica segue un lavoro dalla stima alla fattura. Cerca per codice, titolo, cliente o prodotto (più parole restringono la ricerca), oppure filtra per fase, cliente, prodotto, responsabile e azioni da fare.</p>
       <div class="tr-btn-group">
-        <a class="tr-btn tr-btn--primary" href="/pratiche/nuova"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Nuova pratica</span></a>
+        {% if puo(utente, 'creare_pratica') %}<a class="tr-btn tr-btn--primary" href="/pratiche/nuova"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Nuova pratica</span></a>{% endif %}
       </div>
 
       {#- Chi aspetta chi: scorciatoie sui filtri, con i numeri di tutte le pratiche attive. -#}
@@ -63,6 +63,13 @@
             <option value="nessuno" {{ 'selected' if filtri.responsabile_id == 'nessuno' }}>Senza responsabile</option>
             {% for u in utenti %}<option value="{{ u.id }}" {{ 'selected' if filtri.responsabile_id == u.id }}>{{ u.nome or u.email }}</option>{% endfor %}
           {% endcall %}
+          {% if teams or vede_tutto(utente) %}
+          {% call selezione("team_id", "Team") %}
+            <option value="">Tutti</option>
+            <option value="nessuno" {{ 'selected' if filtri.team_id == 'nessuno' }}>Senza team</option>
+            {% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if filtri.team_id == t.id }}>{{ t.nome }}</option>{% endfor %}
+          {% endcall %}
+          {% endif %}
           {% call selezione("verifica", "Verifica") %}
             <option value="">Tutte</option>
             <option value="proposte" {{ 'selected' if filtri.verifica == 'proposte' }}>Solo proposte dall'IA</option>
@@ -140,6 +147,7 @@
             <div class="tr-datatable">
               {#- Le date sono quelle delle mail e dei documenti, non quella in cui sono stati importati. -#}
               <div class="tr-datatable__row"><span class="tr-datatable__label">Codice</span><span class="tr-datatable__value">{{ p.codice }}</span></div>
+              <div class="tr-datatable__row"><span class="tr-datatable__label">Team</span><span class="tr-datatable__value">{{ p.team.nome if p.team else 'Da assegnare' }}</span></div>
               <div class="tr-datatable__row"><span class="tr-datatable__label">Aperta il</span><span class="tr-datatable__value">{{ p.data_apertura | data }}</span></div>
               <div class="tr-datatable__row"><span class="tr-datatable__label">Ultima attività</span><span class="tr-datatable__value">{{ p.ultimo_evento_at | data }}{% if p.ultimo_evento_at %} · {{ p.ultimo_evento_at | giorni_fa }}{% endif %}</span></div>
               <div class="tr-datatable__row"><span class="tr-datatable__label">In fase da</span><span class="tr-datatable__value">{{ p.stato_dal | giorni_fa }}</span></div>
@@ -151,14 +159,16 @@
         </details>
       </div>
       {#- Cambio di fase dalla scheda: dopo l'invio si torna a questo stesso elenco, con gli stessi filtri e la stessa pagina. -#}
+      {% if stati_consentiti %}
       <div class="tr-card__foot pmo-scheda__fase">
         <form method="post" action="/pratiche/{{ p.id }}/stato" class="pmo-fase-form" aria-label="Cambia la fase di {{ p.codice }}" data-fase="{{ p.stato }}">
           {{ csrf() }}
           <input type="hidden" name="ritorno" value="{{ ritorno }}">
-          {{ scelta_fase(stati, p.stato, "fase-" ~ p.id, "Cambia fase") }}
+          {{ scelta_fase(stati_consentiti, p.stato, "fase-" ~ p.id, "Cambia fase") }}
           <button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Cambia fase</button>
         </form>
       </div>
+      {% endif %}
     </article>
     {% endfor %}
   </div>

@@ -15,6 +15,7 @@ from pmo.db.models import (
     FASE_PER_EVENTO,
     FASI_ORDINATE,
     STATI_TERMINALI,
+    Account,
     Cliente,
     Documento,
     Evento,
@@ -26,6 +27,7 @@ from pmo.db.models import (
     StatoVerifica,
     TipoEvento,
     TipoFonte,
+    User,
 )
 from pmo.services.codici import prossimo_codice
 
@@ -78,6 +80,21 @@ def trova_prodotto(session: Session, nome: str | None, crea: bool = False) -> Pr
     return None
 
 
+def team_automatico(session: Session, account_id: int | None, user_id: int | None = None) -> int | None:
+    """Il team di una pratica nuova: quello della casella da cui nasce; altrimenti l'unico team del proprietario
+    della casella o, per le pratiche create a mano, di chi la crea. Se è ambiguo resta senza team, da assegnare."""
+    persona_id = user_id
+    if account_id is not None:
+        account = session.get(Account, account_id)
+        if account is not None and account.team_id is not None:
+            return account.team_id
+        if account is not None and account.owner_user_id is not None:
+            persona_id = account.owner_user_id
+    persona = session.get(User, persona_id) if persona_id is not None else None
+    attivi = [t.id for t in persona.teams if t.attivo] if persona is not None else []
+    return attivi[0] if len(attivi) == 1 else None
+
+
 def crea_pratica(
     session: Session,
     titolo: str,
@@ -90,6 +107,8 @@ def crea_pratica(
     stato_verifica: str = StatoVerifica.CONFERMATO,
     account_id: int | None = None,
     responsabile_user_id: int | None = None,
+    sostituto_user_id: int | None = None,
+    team_id: int | None = None,
     created_by_user_id: int | None = None,
     data_scadenza: date | None = None,
     riferimenti: dict | None = None,
@@ -100,6 +119,8 @@ def crea_pratica(
     data_apertura: date | None = None,
     stato_dal: datetime | None = None,
 ) -> Pratica:
+    if team_id is None:
+        team_id = team_automatico(session, account_id, created_by_user_id)
     pratica = Pratica(
         codice=prossimo_codice(session),
         titolo=titolo.strip()[:300],
@@ -112,6 +133,8 @@ def crea_pratica(
         stato_verifica=stato_verifica,
         account_id=account_id,
         responsabile_user_id=responsabile_user_id,
+        sostituto_user_id=sostituto_user_id,
+        team_id=team_id,
         created_by_user_id=created_by_user_id,
         data_scadenza=data_scadenza,
         riferimenti=riferimenti or {},

@@ -1,4 +1,10 @@
-"""Digest giornaliero dei solleciti e degli elementi da verificare, via Gmail API o SMTP."""
+"""Notifica email: riepilogo giornaliero dei solleciti e degli elementi da verificare, via Gmail API o SMTP.
+
+Nel codice si chiama ancora "digest". È personale: va all'indirizzo email di ogni utente attivo che ha la notifica email
+attiva (User.riceve_digest), ed è l'unico modo di sceglierne i destinatari. Ogni utente riceve una mail con i soli solleciti ed elementi da verificare delle pratiche,
+mail e documenti che può vedere nell'applicazione (ruolo e team, vedi pmo.permessi). Un indirizzo che non corrisponde a
+un utente attivo del PMO non riceve nulla: non si saprebbe cosa può vedere.
+"""
 
 from __future__ import annotations
 
@@ -29,8 +35,8 @@ from pmo.db.models import (
     SyncRun,
     User,
 )
+from pmo.permessi import filtra_elementi, filtra_pratiche
 from pmo.rules.engine import ordina_gravita
-from pmo.services.impostazioni import get_impostazione
 
 log = logging.getLogger(__name__)
 
@@ -46,24 +52,36 @@ class ContenutoDigest:
     contatori: dict[str, int] = field(default_factory=dict)
 
 
-def _solleciti_aperti(session: Session, oggi: date) -> list[Sollecito]:
-    righe = session.scalars(
+def _solleciti_aperti(session: Session, oggi: date, utente: User | None) -> list[Sollecito]:
+    query = (
         select(Sollecito)
         .options(selectinload(Sollecito.pratica).selectinload(Pratica.cliente))
         .where(Sollecito.stato.in_([StatoSollecito.APERTO.value, StatoSollecito.IN_CARICO.value]))
-    ).all()
+    )
+    if utente is not None:
+        query = query.where(Sollecito.pratica_id.in_(filtra_pratiche(select(Pratica.id), utente)))
+    righe = session.scalars(query).all()
     righe = [s for s in righe if not (s.snooze_fino and s.snooze_fino > oggi)]
     righe.sort(key=lambda s: (ordina_gravita(s.gravita), s.notificato_il is not None, s.pratica.codice))
     return righe
 
 
-def componi_digest(session: Session, settings: Settings | None = None, oggi: date | None = None) -> ContenutoDigest:
+def componi_digest(
+    session: Session, settings: Settings | None = None, oggi: date | None = None, utente: User | None = None
+) -> ContenutoDigest:
+    """Il digest visto da `utente` (solo ciò che può vedere). Senza utente, il riepilogo completo (uso interno e test)."""
     settings = settings or get_settings()
     oggi = oggi or date.today()
-    solleciti = _solleciti_aperti(session, oggi)
-    da_rivedere_msg = session.scalar(select(func.count()).select_from(Messaggio).where(Messaggio.stato == StatoMessaggio.DA_RIVEDERE.value)) or 0
-    da_rivedere_doc = session.scalar(select(func.count()).select_from(Documento).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value)) or 0
-    proposte = session.scalar(select(func.count()).select_from(Pratica).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value)) or 0
+    solleciti = _solleciti_aperti(session, oggi, utente)
+
+    def conta(query, modello=None) -> int:  # noqa: ANN001
+        if utente is not None:
+            query = filtra_pratiche(query, utente) if modello is None else filtra_elementi(query, utente, modello)
+        return int(session.scalar(query) or 0)
+
+    da_rivedere_msg = conta(select(func.count(Messaggio.id)).where(Messaggio.stato == StatoMessaggio.DA_RIVEDERE.value), Messaggio)
+    da_rivedere_doc = conta(select(func.count(Documento.id)).where(Documento.stato == StatoMessaggio.DA_RIVEDERE.value), Documento)
+    proposte = conta(select(func.count(Pratica.id)).where(Pratica.stato_verifica == StatoVerifica.PROPOSTO.value))
     nuovi = [s for s in solleciti if s.notificato_il is None]
     contatori = {
         "solleciti": len(solleciti),
@@ -73,10 +91,10 @@ def componi_digest(session: Session, settings: Settings | None = None, oggi: dat
         "pratiche_proposte": int(proposte),
     }
     base = settings.base_url.rstrip("/")
-    oggetto = f"[PMO] {oggi.strftime('%d/%m/%Y')}: {contatori['solleciti']} solleciti aperti ({contatori['nuovi']} nuovi), {contatori['da_rivedere']} elementi da verificare"
+    oggetto = f"[{settings.app_name}] {oggi.strftime('%d/%m/%Y')}: {contatori['solleciti']} solleciti aperti ({contatori['nuovi']} nuovi), {contatori['da_rivedere']} elementi da verificare"
 
-    righe_txt: list[str] = [f"Digest PMO del {oggi.strftime('%d/%m/%Y')}", ""]
-    righe_html: list[str] = [f"<h2>Digest PMO del {oggi.strftime('%d/%m/%Y')}</h2>"]
+    righe_txt: list[str] = [f"Notifiche {settings.app_name} del {oggi.strftime('%d/%m/%Y')}", ""]
+    righe_html: list[str] = [f"<h2>Notifiche {html.escape(settings.app_name)} del {oggi.strftime('%d/%m/%Y')}</h2>"]
     righe_txt.append(
         f"Solleciti aperti: {contatori['solleciti']} (nuovi: {contatori['nuovi']}, critici: {contatori['critici']}). "
         f"Da verificare: {contatori['da_rivedere']} messaggi/documenti, {contatori['pratiche_proposte']} pratiche proposte."
@@ -107,17 +125,12 @@ def componi_digest(session: Session, settings: Settings | None = None, oggi: dat
         righe_txt.append("Nessun sollecito aperto.")
         righe_html.append("<p>Nessun sollecito aperto.</p>")
     righe_txt += ["", f"Cruscotto: {base}/"]
-    righe_html.append(f"<p><a href='{base}/'>Apri il cruscotto PMO</a></p>")
+    righe_html.append(f"<p><a href='{base}/'>Apri il cruscotto di {html.escape(settings.app_name)}</a></p>")
     return ContenutoDigest(oggetto=oggetto, testo="\n".join(righe_txt), html="\n".join(righe_html), solleciti=solleciti, contatori=contatori)
 
 
 def destinatari_digest(session: Session, settings: Settings | None = None) -> list[str]:
-    settings = settings or get_settings()
-    if settings.digest_recipients:
-        return list(settings.digest_recipients)
-    cfg = get_impostazione(session, "digest")
-    if cfg.get("destinatari"):
-        return [d.lower() for d in cfg["destinatari"]]
+    """Gli indirizzi email degli utenti attivi con la notifica email attiva."""
     utenti = session.scalars(select(User).where(User.attivo.is_(True), User.riceve_digest.is_(True))).all()
     return [u.email for u in utenti]
 
@@ -144,6 +157,13 @@ def _account_mittente(session: Session) -> Account | None:
     return None
 
 
+def _personali(session: Session, indirizzi: list[str]) -> tuple[list[User], list[str]]:
+    """Gli utenti attivi corrispondenti agli indirizzi, e gli indirizzi che non sono utenti del PMO (esclusi)."""
+    puliti = list(dict.fromkeys(i.strip().lower() for i in indirizzi if i and i.strip()))
+    utenti = {u.email: u for u in session.scalars(select(User).where(User.email.in_(puliti or [""]), User.attivo.is_(True))).all()}
+    return [utenti[i] for i in puliti if i in utenti], [i for i in puliti if i not in utenti]
+
+
 def invia_digest(
     session: Session,
     settings: Settings | None = None,
@@ -151,46 +171,65 @@ def invia_digest(
     destinatari: list[str] | None = None,
     solo_anteprima: bool = False,
 ) -> dict:
+    """Compone e invia un digest per destinatario, ciascuno con ciò che quel destinatario può vedere."""
     settings = settings or get_settings()
     run = SyncRun(tipo="digest")
     session.add(run)
     session.flush()
-    contenuto = componi_digest(session, settings)
-    destinatari = destinatari or destinatari_digest(session, settings)
-    esito: dict = {"oggetto": contenuto.oggetto, "destinatari": destinatari, "contatori": contenuto.contatori, "inviato": False}
+    utenti, esclusi = _personali(session, destinatari or destinatari_digest(session, settings))
+    contenuti = {u.email: componi_digest(session, settings, utente=u) for u in utenti}
+    esito: dict = {
+        "destinatari": list(contenuti),
+        "esclusi": esclusi,
+        "contatori": {email: c.contatori for email, c in contenuti.items()},
+        "inviato": False,
+    }
+    if esclusi:
+        esito["nota"] = "Gli indirizzi esclusi non sono utenti attivi dell'applicazione: la notifica email va solo agli utenti."
     if solo_anteprima:
-        esito["testo"] = contenuto.testo
+        esito["anteprime"] = {email: c.testo for email, c in contenuti.items()}
         run.stato = "ok"
-        run.contatori = {**contenuto.contatori, "anteprima": True}
+        run.contatori = {"destinatari": len(contenuti), "esclusi": len(esclusi), "anteprima": True}
         run.finished_at = utcnow()
         session.commit()
         return esito
+    errori: list[str] = []
+    inviati: list[str] = []
     try:
-        if not destinatari:
-            raise RuntimeError("Nessun destinatario configurato per il digest")
+        if not contenuti:
+            raise RuntimeError("Nessun destinatario: nessun utente attivo ha la notifica email attiva")
         account = _account_mittente(session)
-        if account is not None:
-            client = GmailClient(credentials_per_account(account, settings))
-            client.send_email(destinatari, contenuto.oggetto, contenuto.testo, contenuto.html)
-            esito["canale"] = f"gmail:{account.email}"
-        elif settings.smtp_host:
-            _invia_smtp(settings, destinatari, contenuto)
-            esito["canale"] = "smtp"
-        else:
+        if account is None and not settings.smtp_host:
             raise RuntimeError(
                 "Nessun canale di invio: collegare una casella con scope gmail.send (PMO_GMAIL_SEND_SCOPE=true) oppure configurare SMTP"
             )
-        adesso = utcnow()
-        for s in contenuto.solleciti:
-            s.notificato_il = adesso
-        esito["inviato"] = True
-        run.stato = "ok"
+        client = GmailClient(credentials_per_account(account, settings)) if account is not None else None
+        esito["canale"] = f"gmail:{account.email}" if account is not None else "smtp"
+        for email, contenuto in contenuti.items():
+            try:
+                if client is not None:
+                    client.send_email([email], contenuto.oggetto, contenuto.testo, contenuto.html)
+                else:
+                    _invia_smtp(settings, [email], contenuto)
+                inviati.append(email)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Invio del digest a %s fallito", email)
+                errori.append(f"{email}: {exc}")
     except Exception as exc:  # noqa: BLE001
         log.exception("Invio digest fallito")
-        esito["errore"] = str(exc)
-        run.stato = "errore"
-        run.errori = [str(exc)]
-    run.contatori = {**contenuto.contatori, "destinatari": len(destinatari)}
+        errori.append(str(exc))
+    # Un sollecito è "notificato" quando è arrivato ad almeno un destinatario: i "nuovi" sono gli stessi per tutti.
+    adesso = utcnow()
+    for email in inviati:
+        for s in contenuti[email].solleciti:
+            s.notificato_il = adesso
+    esito["inviato"] = bool(inviati)
+    esito["inviati"] = inviati
+    if errori:
+        esito["errore"] = "; ".join(errori)
+        run.errori = errori
+    run.stato = "ok" if not errori else "errore"
+    run.contatori = {"destinatari": len(contenuti), "inviati": len(inviati), "esclusi": len(esclusi)}
     run.finished_at = utcnow()
     session.commit()
     return esito

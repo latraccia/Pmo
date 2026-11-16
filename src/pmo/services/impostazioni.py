@@ -23,7 +23,6 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "ignore_subject_patterns": list(DEFAULT_IGNORE_SUBJECT_PATTERNS),
     },
     "sync": {"giorni_finestra": None, "max_messaggi": None},
-    "digest": {"attivo": True, "destinatari": []},
 }
 
 

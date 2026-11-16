@@ -75,8 +75,11 @@ def test_percorso_completo(client, db):
     for scheda in ("pratiche", "messaggi", "documenti", "errori"):
         assert client.get(f"/revisione?scheda={scheda}").status_code == 200
     assert client.get("/caselle").status_code == 200
-    for scheda in ("regole", "filtri", "digest", "clienti", "prodotti", "utenti"):
+    for scheda in ("regole", "filtri", "prodotti", "utenti", "team"):
         assert client.get(f"/impostazioni?scheda={scheda}").status_code == 200
+    # i clienti hanno una pagina loro: il vecchio collegamento porta lì
+    assert client.get("/impostazioni?scheda=clienti").headers["location"] == "/clienti"
+    assert client.get("/clienti").status_code == 200
     assert client.get("/pratiche/nuova").status_code == 200
     assert client.get("/healthz").status_code == 200
 
@@ -109,3 +112,23 @@ def test_csrf_obbligatorio(client):
 def test_impostazioni_riservate_agli_admin(client, db):
     _login(client, "membro@latraccia.it")
     assert client.get("/impostazioni").status_code == 403
+
+
+def test_il_commit_avviene_prima_della_risposta():
+    """Ogni route usa la sessione con scope "function": il commit precede la risposta, così il redirect dopo un
+    salvataggio mostra già i dati nuovi (con lo scope predefinito il commit arriverebbe dopo l'invio)."""
+    from fastapi.routing import APIRoute
+
+    from pmo.web.deps import get_db
+    from pmo.web.routes import auth, caselle, clienti, dashboard, impostazioni, pratiche, revisione, solleciti
+
+    moduli = (auth, caselle, clienti, dashboard, impostazioni, pratiche, revisione, solleciti)
+
+    def sessioni(dipendente):  # noqa: ANN001, ANN202
+        for sotto in dipendente.dependencies:
+            if sotto.call is get_db:
+                yield sotto
+            yield from sessioni(sotto)
+
+    trovate = [d for m in moduli for r in m.router.routes if isinstance(r, APIRoute) for d in sessioni(r.dependant)]
+    assert trovate and all(d.scope == "function" for d in trovate)
