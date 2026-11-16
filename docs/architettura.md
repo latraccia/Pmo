@@ -27,6 +27,7 @@ Gmail / Drive (per casella)        Claude (structured outputs)
 - **ingest/linker.py** – applica i risultati: collegamento (esistente/nuova/nessuno), creazione di pratiche proposte (con deduplica per titolo), eventi idempotenti per chiave `email:<account>:<id>:<tipo>`, soglie di confidenza.
 - **services/pratiche.py** – dominio: codici progressivi per anno, creazione, eventi, avanzamento di stato (solo in avanti, mai per eventi proposti), aggiornamento importi e scadenze, conferma/rifiuto, unione di doppioni.
 - **rules/engine.py** – valuta le regole su ogni pratica confermata; i solleciti hanno chiave `<pratica>:<regola>`: aggiornati se persistono, risolti dal sistema se cessano, riaperti se ricompaiono, silenziabili con snooze.
+- **services/ordini.py**, **services/verifica_ordini.py** – offerte con revisioni, ordini a righe, residui e importi della commessa; verifica dell'ordine contro l'offerta con regole fisse e deroghe (dettagli in [regole.md](regole.md#verifica-dellordine-contro-lofferta)).
 - **services/digest.py** – notifica email: riepilogo giornaliero via Gmail API (se una casella ha lo scope di invio) o SMTP, all'indirizzo di ogni utente attivo con la notifica attiva; una mail per utente, filtrata secondo il suo ruolo e i suoi team.
 - **services/sync.py** – orchestrazione con lock per casella; usata da CLI, scheduler e pulsante "Sincronizza ora".
 - **web/** – interfaccia server-side in italiano: cruscotto, pratiche (elenco, dettaglio con cronologia e fonti, scheda), solleciti, coda di revisione, caselle e cartelle, clienti, impostazioni (regole, filtri, prodotti, utenti con la notifica email, team).
@@ -42,6 +43,11 @@ Gmail / Drive (per casella)        Claude (structured outputs)
 | `clienti`, `prodotti` | anagrafiche con alias e domini email (migliorano la classificazione); i clienti hanno anche ragione sociale, P.IVA, codici Oracle e VTE e un team di riferimento |
 | `contatti_cliente` | referenti di un cliente; il loro indirizzo aiuta a riconoscere le mail del cliente |
 | `pratiche` | codice, titolo, cliente, prodotto, team, responsabile e sostituto, stato e `stato_dal`, importi (stima/offerta/ordine/fatturato), scadenza, riferimenti JSON (numero ordine, CIG, protocollo, id SIA/VTE…), `stato_verifica` (confermata/proposta), origine |
+| `articoli` | listino di vendita: codice univoco, descrizione, prodotto, unità, prezzo di listino, IVA, attivo. Le righe di offerte e ordini possono indicare l'articolo (`articolo_id`) e ne copiano i dati |
+| `offerte`, `revisioni_offerta`, `righe_offerta` | offerte della commessa, ciascuna con il suo cliente (obbligatorio), con le revisioni (bozza, inviata, accettata, rifiutata, superata), le condizioni e le righe (modulo, quantità, prezzo, sconto, IVA; importo netto calcolato) |
+| `ordini`, `righe_ordine` | ordini della commessa con le righe; conformità all'offerta (esito della verifica in JSON), parziale, deroga (motivo, autore, data), avanzamento, attesa (chi aspetta chi e perché), chiave di idempotenza per gli ordini nati dagli eventi |
+| `allocazioni_righe` | quanto di una riga d'offerta copre una riga d'ordine (automatica o manuale): da qui il residuo |
+| `ordini_messaggi` | mail collegate agli ordini: una mail può riguardare più ordini |
 | `eventi` | cronologia: tipo, data, titolo, descrizione, fonte (email/drive/manuale/sistema) con id e URL, importo, scadenza, confidenza, `stato_verifica` |
 | `messaggi` | mail importate: intestazioni, corpo troncato, allegati (metadati + testo estratto), stato (nuovo/classificato/da_rivedere/ignorato/errore), pratica e origine del collegamento (tag/thread/ai/manuale), esito della classificazione |
 | `documenti` | file Drive: percorso, tipo, estratto, stato, pratica |
@@ -56,10 +62,10 @@ Le regole stanno in `src/pmo/permessi.py` e valgono per interfaccia web e server
 | Ruolo | Vede | Può fare |
 |---|---|---|
 | `amministratore` | tutto | tutto, compresi configurazione, utenti, team e caselle di tutti |
-| `direzione` | tutto | gestire pratiche e clienti, chiudere, assegnare; niente configurazione tecnica |
+| `direzione` | tutto | gestire commesse, offerte, ordini e clienti, chiudere, assegnare, approvare deroghe; niente configurazione tecnica |
 | `amministrazione` | tutto | consultare, modificare gli importi, gestire i clienti, annotare, gestire i solleciti |
-| `responsabile` | i propri team | creare, modificare, confermare, unire, cambiare fase, chiudere, assegnare team/responsabile/sostituto, gestire i clienti |
-| `commerciale` | i propri team | creare, modificare, confermare, cambiare fase (non chiudere né annullare), gestire i clienti |
+| `responsabile` | i propri team | creare, modificare, confermare, unire, cambiare fase, chiudere, assegnare team/responsabile/sostituto, gestire i clienti, gestire offerte e ordini, approvare deroghe |
+| `commerciale` | i propri team | creare, modificare, confermare, cambiare fase (non chiudere né annullare), gestire i clienti, gestire offerte e ordini, approvare deroghe |
 | `operativo` | i propri team | annotare (note ed eventi, collegare mail e documenti), gestire i solleciti |
 
 Chi non vede tutto vede una pratica se: è del suo team; ne è responsabile, sostituto o autore; oppure la pratica è senza team ed è nata da una casella che vede (la propria o una del suo team). Le mail e i documenti si vedono se arrivano da una casella visibile o sono collegati a una pratica visibile. Una pratica nuova prende il team della casella da cui nasce, oppure l'unico team del proprietario della casella (o di chi la crea a mano); se è ambiguo resta "senza team" e si assegna dall'elenco.

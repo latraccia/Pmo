@@ -20,6 +20,7 @@ from pmo.db.models import (
     Documento,
     Evento,
     Messaggio,
+    Ordine,
     Pratica,
     Prodotto,
     Sollecito,
@@ -29,6 +30,7 @@ from pmo.db.models import (
     TipoFonte,
     User,
 )
+from pmo.services import ordini as ordini_svc
 from pmo.services.codici import prossimo_codice
 
 log = logging.getLogger(__name__)
@@ -150,7 +152,7 @@ def crea_pratica(
         session,
         pratica,
         tipo=TipoEvento.NOTA,
-        titolo="Pratica creata" + (" (proposta dall'IA)" if origine == "ai" else ""),
+        titolo="Commessa creata" + (" (proposta dall'IA)" if origine == "ai" else ""),
         descrizione="",
         fonte_tipo=TipoFonte.SISTEMA,
         stato_verifica=StatoVerifica.CONFERMATO,
@@ -223,9 +225,8 @@ def _aggiorna_importi_e_riferimenti(session: Session, pratica: Pratica, evento: 
         if evento.tipo == TipoEvento.STIMA_INVIATA and pratica.importo_stima is None:
             pratica.importo_stima = importo
         elif evento.tipo in (TipoEvento.OFFERTA_INVIATA, TipoEvento.OFFERTA_ACCETTATA):
-            pratica.importo_offerta = importo
-        elif evento.tipo == TipoEvento.ORDINE_RICEVUTO:
-            pratica.importo_ordine = importo
+            if not ordini_svc.revisioni_accettate(pratica):  # con le righe l'importo offerto si calcola
+                pratica.importo_offerta = importo
         elif evento.tipo == TipoEvento.FATTURA_EMESSA:
             totale = session.scalar(
                 select(func.coalesce(func.sum(Evento.importo), 0)).where(
@@ -240,6 +241,10 @@ def _aggiorna_importi_e_riferimenti(session: Session, pratica: Pratica, evento: 
             evento.scadenza >= date.today() and evento.scadenza < pratica.data_scadenza
         ):
             pratica.data_scadenza = evento.scadenza
+    if evento.tipo == TipoEvento.ORDINE_RICEVUTO:
+        # L'ordine diventa un ordine con le sue righe (una "Da dettagliare" finché non si scrivono): l'importo
+        # ordinato della commessa è la somma degli ordini. Rileggere lo stesso ordine non lo duplica.
+        ordini_svc.ordine_da_evento(session, pratica, evento)
     riferimenti = (evento.dati or {}).get("riferimenti") or {}
     if riferimenti:
         nuovi = dict(pratica.riferimenti or {})
@@ -386,9 +391,14 @@ def conferma_evento(session: Session, evento: Evento, user_id: int | None = None
     applica_evento(session, evento.pratica, evento)
 
 
-def rifiuta_evento(session: Session, evento: Evento, user_id: int | None = None) -> None:
+def rifiuta_evento(session: Session, evento: Evento, user_id: int | None = None) -> str | None:
+    """Scarta un evento. Se era un "ordine ricevuto" già applicato, l'ordine che aveva creato segue l'evento
+    (vedi ordini.evento_rimosso); restituisce la frase che lo dice, se c'è."""
     evento.stato_verifica = StatoVerifica.RIFIUTATO
     evento.dati = {**(evento.dati or {}), "rifiutato_da": user_id}
+    if evento.tipo == TipoEvento.ORDINE_RICEVUTO:
+        return ordini_svc.evento_rimosso(session, evento)
+    return None
 
 
 def conferma_pratica(session: Session, pratica: Pratica, user_id: int | None = None, soglia: float = 0.0) -> None:
@@ -412,7 +422,7 @@ def rifiuta_pratica(session: Session, pratica: Pratica, user_id: int | None = No
         messaggio.pratica_id = None
         messaggio.link_origine = None
         messaggio.stato = "da_rivedere"
-        messaggio.motivo = "Pratica proposta scartata"
+        messaggio.motivo = "Commessa proposta scartata"
     for documento in list(pratica.documenti):
         documento.pratica_id = None
         documento.link_origine = None
@@ -426,6 +436,20 @@ def unisci_pratiche(session: Session, sorgente: Pratica, destinazione: Pratica, 
     """Sposta eventi, messaggi e documenti della sorgente nella destinazione e annulla la sorgente."""
     if sorgente.id == destinazione.id:
         return
+    # Offerte e ordini passano alla destinazione prima degli eventi, così un "ordine ricevuto" riapplicato ritrova
+    # il suo ordine invece di crearne un altro.
+    for offerta in list(sorgente.offerte):
+        offerta.pratica_id = destinazione.id
+    for ordine in list(sorgente.ordini):
+        ordine.pratica_id = destinazione.id
+        prefisso = f"pratica:{sorgente.id}:"
+        if ordine.chiave and ordine.chiave.startswith(prefisso):
+            nuova = f"pratica:{destinazione.id}:" + ordine.chiave[len(prefisso):]
+            libera = session.scalar(select(Ordine.id).where(Ordine.chiave == nuova)) is None
+            ordine.chiave = nuova if libera else f"{ordine.chiave}#merge{sorgente.id}"
+    session.flush()
+    session.expire(sorgente, ["offerte", "ordini"])
+    session.expire(destinazione, ["offerte", "ordini"])
     for evento in list(sorgente.eventi):
         if evento.tipo in (TipoEvento.CAMBIO_STATO,) and evento.fonte_tipo == TipoFonte.SISTEMA:
             session.delete(evento)
@@ -451,19 +475,20 @@ def unisci_pratiche(session: Session, sorgente: Pratica, destinazione: Pratica, 
     if destinazione.data_scadenza is None:
         destinazione.data_scadenza = sorgente.data_scadenza
     session.flush()
+    ordini_svc.ricalcola_importi_commessa(session, destinazione)
     session.refresh(sorgente)
     cambia_stato(
         session,
         sorgente,
         StatoPratica.ANNULLATA,
-        motivo=f"Unita alla pratica {destinazione.codice}",
+        motivo=f"Unita alla commessa {destinazione.codice}",
         user_id=user_id,
     )
     aggiungi_evento(
         session,
         destinazione,
         tipo=TipoEvento.NOTA,
-        titolo=f"Unita la pratica {sorgente.codice} ({sorgente.titolo})",
+        titolo=f"Unita la commessa {sorgente.codice} ({sorgente.titolo})",
         fonte_tipo=TipoFonte.SISTEMA,
         created_by_user_id=user_id,
         aggiorna_stato=False,

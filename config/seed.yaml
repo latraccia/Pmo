@@ -106,6 +106,17 @@ prodotti:
     alias: [SD5, AQ Sanità Digitale, Ordine Diretto SD5]
     descrizione: Appalti specifici e ordini diretti dell'Accordo Quadro Consip Sanità Digitale 5 (RTI con Engineering, TIM, Maps)
 
+# Listino di vendita: gli articoli che si scelgono nelle righe di offerte e ordini (si gestisce anche da
+# Impostazioni -> Listino). Campi: codice (univoco), descrizione, prodotto (nome di un prodotto qui sopra),
+# unita, prezzo (di listino, in euro), iva (aliquota %), attivo (predefinito: true). Esempio:
+#   - codice: GPD-LIC-01
+#     descrizione: Licenza Gepadial, un anno
+#     prodotto: Gepadial
+#     unita: anno
+#     prezzo: 1200
+#     iva: 22
+articoli: []
+
 clienti:
   - nome: Fondazione Policlinico Universitario A. Gemelli
     alias: [Policlinico Gemelli, Gemelli]

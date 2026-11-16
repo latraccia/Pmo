@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, area, selezione, csrf, conformita with context %}
+{% from "ordini/_righe.html" import tabella_righe with context %}
+{% block titolo %}{{ offerta.nome }} · {{ pratica.codice }} · {{ app_name }}{% endblock %}
+{% block contenuto %}
+{%- set modificabile = puo(utente, 'gestire_ordini') -%}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Offerta", pratica.codice) }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ (revisione.totale if revisione else 0) | migliaia }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">migliaia di euro<br>rev. {{ revisione.numero_revisione if revisione else '-' }}</span>
+      </p>
+      <dl class="tr-facts">
+        <div><dt>Cliente</dt><dd>{{ offerta.cliente.nome if offerta.cliente else 'Da indicare' }}</dd></div>
+        <div><dt>Numero</dt><dd>{{ offerta.numero or '-' }}</dd></div>
+        <div><dt>Revisioni</dt><dd>{{ offerta.revisioni | length }}</dd></div>
+        <div><dt>Accettata</dt><dd>{{ ('rev. ' ~ offerta.revisione_accettata.numero_revisione) if offerta.revisione_accettata else 'Nessuna' }}</dd></div>
+        {% if revisione and revisione.stato == 'accettata' %}<div><dt>Residuo da ordinare</dt><dd>{{ residuo | euro }}</dd></div>{% endif %}
+      </dl>
+    </aside>
+    <div class="tr-intro__main">
+      <h1 class="pmo-titolo">{{ offerta.titolo or offerta.nome }}</h1>
+      <p class="tr-intro__lead">{{ offerta.cliente.nome if offerta.cliente else 'Cliente da indicare' }} · <a href="/pratiche/{{ pratica.id }}">{{ pratica.titolo }}</a></p>
+      {% if not offerta.cliente %}<div class="tr-notice tr-notice--warning pmo-mt-5"><span class="tr-notice__icon" aria-hidden="true"></span><div class="tr-notice__content"><p class="tr-notice__body">Manca il cliente dell'offerta: indicalo nei dati dell'offerta qui sotto.</p></div></div>{% endif %}
+      <div class="tr-btn-group">
+        <a class="tr-btn tr-btn--quiet" href="/pratiche/{{ pratica.id }}"><span>Commessa {{ pratica.codice }}</span></a>
+        <a class="tr-btn tr-btn--quiet" href="/offerte"><span>Tutte le offerte</span></a>
+        {% if modificabile %}
+        <form method="post" action="/offerte/{{ offerta.id }}/revisioni">{{ csrf() }}<button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Nuova revisione</span></button></form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% if offerta.revisioni | length > 1 %}
+  <div class="tr-tabs pmo-mt-5" aria-label="Revisioni dell'offerta">
+    {% for r in offerta.revisioni %}
+    <a class="tr-tab" href="/offerte/{{ offerta.id }}?rev={{ r.numero_revisione }}" {% if revisione and r.id == revisione.id %}aria-current="page" aria-selected="true"{% endif %}>Rev. {{ r.numero_revisione }} · {{ r.etichetta_stato }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% if revisione %}
+<section class="tr-card pmo-section" aria-labelledby="t-revisione">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-revisione">Revisione <em>{{ revisione.numero_revisione }}</em></h2>
+    <span class="tr-card__aside">{{ revisione.etichetta_stato }}{% if revisione.data %} · {{ revisione.data | data }}{% endif %}</span>
+  </div>
+  {% if modificabile %}
+  <form method="post" action="/revisioni/{{ revisione.id }}/modifica">
+    {{ csrf() }}
+    <div class="pmo-grid">
+      {{ campo("data", "Data", revisione.data.isoformat() if revisione.data else '', tipo="date") }}
+      {% call selezione("stato", "Stato", aiuto="Accettarla rende superata la revisione accettata prima") %}{% for v, t in stati_revisione %}<option value="{{ v }}" {{ 'selected' if revisione.stato == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+    </div>
+    {{ area("condizioni", "Condizioni", revisione.condizioni, righe=2, aiuto="Pagamento, consegna, penali: si confrontano con quelle dell'ordine") }}
+    <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--save" aria-hidden="true"></span><span>Salva la revisione</span></button></div>
+  </form>
+  {% elif revisione.condizioni %}
+  <p class="tr-body">{{ revisione.condizioni }}</p>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-righe-offerta">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-righe-offerta">Le <em>righe</em></h2>
+    <span class="tr-card__aside">importi netti, IVA esclusa</span>
+  </div>
+  {{ tabella_righe(revisione.righe, "/revisioni/" ~ revisione.id, modificabile=modificabile, totale=revisione.totale, vuoto="Nessuna riga", articoli=articoli) }}
+  {% if revisione.stato == 'accettata' and revisione.righe %}
+  <div class="tr-datatable pmo-mt-5">
+    {% for r in revisione.righe %}
+    <div class="tr-datatable__row"><span class="tr-datatable__label">Residuo {{ r.modulo or r.posizione }}</span><span class="tr-datatable__value">{{ residui.get(r.id) | euro }}</span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="tr-card pmo-section" aria-labelledby="t-ordini-offerta">
+  <div class="tr-card__head"><h2 class="tr-card__title" id="t-ordini-offerta">Gli <em>ordini</em> su questa revisione</h2></div>
+  {% if ordini %}
+  <ul class="pmo-list">{% for o in ordini %}<li><a class="pmo-voce__titolo" href="/ordini/{{ o.id }}">{{ o.nome }}</a> {{ conformita(o) }} <span class="pmo-meta">{{ o.totale | euro }}</span></li>{% endfor %}</ul>
+  {% else %}<p class="tr-card__empty">Nessun ordine</p>{% endif %}
+</section>
+{% endif %}
+
+{% if modificabile %}
+<section class="tr-card pmo-section" aria-labelledby="t-dati-offerta">
+  <div class="tr-card__head"><h2 class="tr-card__title" id="t-dati-offerta">I <em>dati</em> dell'offerta</h2></div>
+  <form method="post" action="/offerte/{{ offerta.id }}/modifica">
+    {{ csrf() }}
+    <div class="pmo-grid">
+      {% call selezione("cliente_id", "Cliente *") %}<option value="">Scegli il cliente</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if offerta.cliente_id == c.id }}>{{ c.nome }}</option>{% endfor %}{% if offerta.cliente and offerta.cliente not in clienti %}<option value="{{ offerta.cliente_id }}" selected>{{ offerta.cliente.nome }}</option>{% endif %}{% endcall %}
+      {{ campo("numero", "Numero", offerta.numero, segnaposto="OFF-2026-12") }}
+      {{ campo("titolo", "Titolo", offerta.titolo) }}
+    </div>
+    {{ area("note", "Note", offerta.note, righe=2) }}
+    <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit">Salva</button></div>
+  </form>
+  <details class="pmo-details pmo-mt-5">
+    <summary><span class="pmo-details__label">Elimina l'offerta</span></summary>
+    <form method="post" action="/offerte/{{ offerta.id }}/elimina" class="pmo-details__body" data-conferma="Eliminare l'offerta con tutte le revisioni e le righe? Gli ordini che la usavano restano senza offerta di riferimento.">
+      {{ csrf() }}
+      <button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Elimina l'offerta</button>
+    </form>
+  </details>
+</section>
+{% endif %}
+{% endblock %}

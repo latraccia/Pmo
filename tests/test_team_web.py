@@ -78,7 +78,11 @@ def test_direzione_vede_tutto_ma_non_configura(client, scenario):
     _login(client, "ceo@latraccia.it")
     assert client.get(f"/pratiche/{scenario['pb'].id}").status_code == 200
     assert "Pratica del team Beta" in client.get("/pratiche").text
-    assert client.get("/impostazioni").status_code == 403
+    # in Impostazioni la direzione vede solo il listino di vendita, non la configurazione tecnica
+    pagina = client.get("/impostazioni")
+    assert pagina.status_code == 200 and "Il listino è vuoto" in pagina.text and "scheda=regole" not in pagina.text
+    assert client.get("/impostazioni?scheda=regole").status_code == 403
+    assert client.get("/impostazioni?scheda=utenti").status_code == 403
 
 
 def test_operativo_non_conferma_ne_chiude_ma_annota(client, scenario):

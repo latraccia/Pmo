@@ -31,9 +31,11 @@ body.tr-page { min-height: 100vh; }
   min-height: 100vh;
 }
 .pmo-shell { min-height: 100vh; min-width: 0; }
+/* 1280px di contenuto (più i margini laterali): le tabelle di righe, ordini e listino stanno su una riga sugli
+   schermi larghi. I testi lunghi restano limitati alla loro misura di lettura (--tr-measure-prose). */
 .pmo-container {
   width: 100%;
-  max-width: 1180px;
+  max-width: calc(1280px + 2 * var(--tr-space-7));
   margin: 0 auto;
   padding: 0 var(--tr-space-7);
 }
@@ -732,3 +734,36 @@ a.pmo-title-link:focus-visible { outline: 2px solid var(--tr-brand-500); outline
 .pmo-tessera__etichetta { font-family: var(--tr-font-mono); font-size: var(--tr-text-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--tr-ink-400); }
 .pmo-tessera.is-attiva { border-color: var(--tr-brand-500); background: var(--tr-brand-50); }
 .pmo-tessera.is-attiva .pmo-tessera__numero { color: var(--tr-brand-600); }
+
+/* ==========================================================================
+   Righe di offerte e ordini
+   ========================================================================== */
+.pmo-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pmo-table th.pmo-num { text-align: right; }
+.pmo-righe .tr-field { min-width: 0; }
+.pmo-righe td .pmo-field--narrow { width: 96px; margin-left: auto; }
+.pmo-righe td.pmo-righe__codice .tr-field { width: 130px; }
+.pmo-righe td.pmo-righe__descr .tr-field { min-width: 220px; }
+.pmo-righe__azioni { white-space: nowrap; }
+.pmo-righe__azioni form { display: inline-block; margin: 0; }
+.pmo-righe__nuova td { background: var(--tr-state-success-tint, transparent); }
+.pmo-riga--scostamento td { background: var(--tr-state-danger-tint, transparent); }
+.pmo-riga__avviso { margin: var(--tr-space-1) 0 0; font-size: var(--tr-text-caption); color: var(--tr-state-danger-dark, var(--tr-state-danger)); }
+.pmo-table tfoot th { border-top: var(--tr-rule-thin) solid var(--tr-border-soft); padding-top: var(--tr-space-3); }
+.pmo-righe td.pmo-righe__pos .pmo-field--narrow { width: 56px; }
+.pmo-righe td:nth-child(n+4) .pmo-field--narrow { width: 104px; }
+.pmo-listino td:nth-child(1) .tr-field { width: 150px; }
+.pmo-listino td:nth-child(2) .tr-field { min-width: 280px; width: auto; }
+.pmo-listino td:nth-child(3) .tr-field { min-width: 160px; }
+.pmo-righe td.pmo-righe__articolo .tr-field { min-width: 180px; }
+.pmo-righe td.pmo-righe__qta .pmo-field--narrow { width: 72px; }
+.pmo-righe td.pmo-righe__pct .pmo-field--narrow { width: 60px; }
+.pmo-righe td.pmo-righe__descr .tr-field { min-width: 200px; }
+.pmo-righe td.pmo-righe__descr { min-width: 240px; }
+.pmo-righe td.pmo-righe__descr .tr-field + .tr-field { margin-top: var(--tr-space-1); }
+.pmo-righe td.pmo-righe__articolo .tr-field { min-width: 0; width: 170px; }
+.pmo-righe td.pmo-righe__articolo .tr-field { width: 150px; }
+.pmo-righe td.pmo-righe__prezzo .pmo-field--narrow { width: 92px; }
+.pmo-righe td.pmo-righe__pos .pmo-field--narrow { width: 48px; }
+.pmo-righe .tr-field__control[readonly] { background: var(--tr-surface-muted, rgba(0, 0, 0, 0.04)); color: var(--tr-ink-600); cursor: default; }
+.pmo-righe__guida { margin: 0 0 var(--tr-space-3); max-width: var(--tr-measure-prose); }

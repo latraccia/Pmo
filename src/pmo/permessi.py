@@ -55,6 +55,8 @@ class Azione(enum.StrEnum):
     CHIUDERE = "chiudere"  # passaggio a "chiusa" o "annullata"
     ANNOTARE = "annotare"  # note ed eventi, collegamento di mail e documenti, revisione degli eventi proposti
     GESTIRE_SOLLECITI = "gestire_solleciti"
+    GESTIRE_ORDINI = "gestire_ordini"  # offerte, ordini e righe; verifica dell'ordine contro l'offerta
+    APPROVARE_DEROGHE = "approvare_deroghe"  # accettare un ordine con scostamenti, con motivo
 
 
 _LAVORO_PRATICHE = frozenset(
@@ -67,6 +69,8 @@ _LAVORO_PRATICHE = frozenset(
         Azione.CAMBIARE_STATO,
         Azione.ANNOTARE,
         Azione.GESTIRE_SOLLECITI,
+        Azione.GESTIRE_ORDINI,
+        Azione.APPROVARE_DEROGHE,
     }
 )
 
@@ -209,7 +213,7 @@ def carica_pratica_visibile(session: Session, pratica_id: int, utente: User) -> 
     """La pratica, se l'utente può vederla; altrimenti 404 (non si rivela che esiste)."""
     pratica = session.get(Pratica, pratica_id)
     if not pratica_visibile(session, pratica, utente):
-        raise HTTPException(status_code=404, detail="Pratica non trovata")
+        raise HTTPException(status_code=404, detail="Commessa non trovata")
     return pratica
 
 

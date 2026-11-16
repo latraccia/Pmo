@@ -107,7 +107,7 @@
         <div class="tr-btn-group">
           <a class="tr-btn tr-btn--quiet tr-btn--sm" href="/caselle/{{ a.id }}/esecuzioni"><span>Storico esecuzioni</span><span class="tr-icon tr-icon--arrow-right" aria-hidden="true"></span></a>
           {% if a.id in modificabili %}<form method="post" action="/caselle/{{ a.id }}/scollega" data-conferma="Scollegare la casella? I token verranno eliminati.">{{ csrf() }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--unlock" aria-hidden="true"></span><span>Scollega</span></button></form>{% endif %}
-          {% if puo(utente, 'gestire_caselle') %}<form method="post" action="/caselle/{{ a.id }}/elimina" data-conferma="Eliminare la casella con tutti i messaggi e documenti importati? Le pratiche restano.">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit"><span class="tr-icon tr-icon--trash" aria-hidden="true"></span><span>Elimina</span></button></form>{% endif %}
+          {% if puo(utente, 'gestire_caselle') %}<form method="post" action="/caselle/{{ a.id }}/elimina" data-conferma="Eliminare la casella con tutti i messaggi e documenti importati? Le commesse restano.">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit"><span class="tr-icon tr-icon--trash" aria-hidden="true"></span><span>Elimina</span></button></form>{% endif %}
         </div>
 
         {% if run_per_account.get(a.id) %}

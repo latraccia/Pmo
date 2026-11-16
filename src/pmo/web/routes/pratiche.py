@@ -45,6 +45,7 @@ from pmo.permessi import (
     vede_tutto,
 )
 from pmo.rules.engine import ordina_gravita
+from pmo.services import ordini as ordini_svc
 from pmo.services import pratiche as svc
 from pmo.services.richieste import (
     AZIONI_DA_FARE,
@@ -303,7 +304,7 @@ def crea(
     utente: User = Depends(richiede(Azione.CREARE_PRATICA)),
 ):
     if stato in ("chiusa", "annullata") and not puo(utente, Azione.CHIUDERE):
-        raise HTTPException(status_code=403, detail="Il tuo ruolo non consente di creare una pratica chiusa")
+        raise HTTPException(status_code=403, detail="Il tuo ruolo non consente di creare una commessa chiusa")
     pratica = svc.crea_pratica(
         session,
         titolo,
@@ -320,7 +321,7 @@ def crea(
         importo_ordine=_decimal(importo_ordine),
         priorita=priorita,
     )
-    flash(request, f"Pratica {pratica.codice} creata. Usa il tag {pratica.tag} nell'oggetto delle mail.")
+    flash(request, f"Commessa {pratica.codice} creata. Usa il tag {pratica.tag} nell'oggetto delle mail.")
     return redirect(f"/pratiche/{pratica.id}")
 
 
@@ -359,6 +360,8 @@ def dettaglio(request: Request, pratica_id: int, session: Session = Depends(get_
         stati_consentiti={k: v for k, v in ETICHETTE_STATO.items() if puo_passare_a(utente, k)},
         tipi_evento=[(t, ETICHETTE_EVENTO[t]) for t in TIPI_EVENTO_MANUALI],
         riferimenti_testo="\n".join(f"{k}={v}" for k, v in (pratica.riferimenti or {}).items()),
+        residui_offerte={r.id: ordini_svc.residuo_revisione(r) for r in ordini_svc.revisioni_accettate(pratica)},
+        importi_calcolati=ordini_svc.importi_calcolati(pratica),
     )
 
 
@@ -402,13 +405,17 @@ def modifica(
         pratica.sostituto_user_id = _id_utente(sostituto_id)
         pratica.team_id = _team_scelto(session, utente, team_id)
     if puo(utente, Azione.MODIFICARE_IMPORTI):
+        # Con offerte accettate e ordini a righe, offerto e ordinato si calcolano dalle righe: non si scrivono.
+        calcolati = ordini_svc.importi_calcolati(pratica)
         pratica.importo_stima = _decimal(importo_stima)
-        pratica.importo_offerta = _decimal(importo_offerta)
-        pratica.importo_ordine = _decimal(importo_ordine)
+        if not calcolati["importo_offerta"]:
+            pratica.importo_offerta = _decimal(importo_offerta)
+        if not calcolati["importo_ordine"]:
+            pratica.importo_ordine = _decimal(importo_ordine)
         pratica.importo_fatturato = _decimal(importo_fatturato)
-    flash(request, "Pratica aggiornata.")
+    flash(request, "Commessa aggiornata.")
     if not pratica_visibile(session, pratica, utente):
-        flash(request, "La pratica ora appartiene a un team di cui non fai parte: non la vedi più.", "avviso")
+        flash(request, "La commessa ora appartiene a un team di cui non fai parte: non la vedi più.", "avviso")
         return redirect("/pratiche")
     return redirect(f"/pratiche/{pratica.id}")
 
@@ -469,11 +476,12 @@ def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str
         svc.conferma_evento(session, evento, utente.id)
         flash(request, "Evento confermato.")
     elif azione == "rifiuta":
-        svc.rifiuta_evento(session, evento, utente.id)
-        flash(request, "Evento scartato.")
+        nota = svc.rifiuta_evento(session, evento, utente.id)
+        flash(request, "Evento scartato." + (f" {nota}" if nota else ""))
     elif azione == "elimina":
+        nota = ordini_svc.evento_rimosso(session, evento) if evento.tipo == TipoEvento.ORDINE_RICEVUTO else None
         session.delete(evento)
-        flash(request, "Evento eliminato.")
+        flash(request, "Evento eliminato." + (f" {nota}" if nota else ""))
     else:
         raise HTTPException(status_code=404)
     return redirect(f"/pratiche/{pratica_id}")
@@ -483,7 +491,7 @@ def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str
 def conferma(request: Request, pratica_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.CONFERMARE))):
     pratica = _carica(session, pratica_id, utente)
     svc.conferma_pratica(session, pratica, utente.id, soglia=get_settings().event_confidence_threshold)
-    flash(request, f"Pratica {pratica.codice} confermata.")
+    flash(request, f"Commessa {pratica.codice} confermata.")
     return redirect(f"/pratiche/{pratica.id}")
 
 
@@ -491,7 +499,7 @@ def conferma(request: Request, pratica_id: int, session: Session = Depends(get_d
 def scarta(request: Request, pratica_id: int, session: Session = Depends(get_db, scope="function"), utente: User = Depends(richiede(Azione.CONFERMARE))):
     pratica = _carica(session, pratica_id, utente)
     svc.rifiuta_pratica(session, pratica, utente.id)
-    flash(request, f"Pratica proposta {pratica.codice} scartata: i messaggi tornano in revisione.")
+    flash(request, f"Commessa proposta {pratica.codice} scartata: i messaggi tornano in revisione.")
     return redirect("/revisione")
 
 
@@ -500,10 +508,10 @@ def unisci(request: Request, pratica_id: int, codice: str = Form(...), session: 
     pratica = _carica(session, pratica_id, utente)
     destinazione = svc.trova_per_codice(session, codice.strip())
     if destinazione is None or destinazione.id == pratica.id or not pratica_visibile(session, destinazione, utente):
-        flash(request, "Codice pratica di destinazione non valido.", "errore")
+        flash(request, "Codice commessa di destinazione non valido.", "errore")
         return redirect(f"/pratiche/{pratica.id}")
     svc.unisci_pratiche(session, pratica, destinazione, utente.id)
-    flash(request, f"Pratica {pratica.codice} unita a {destinazione.codice}.")
+    flash(request, f"Commessa {pratica.codice} unita a {destinazione.codice}.")
     return redirect(f"/pratiche/{destinazione.id}")
 
 
@@ -534,7 +542,7 @@ def collega_messaggio(request: Request, messaggio_id: int, codice: str = Form(""
         raise HTTPException(status_code=404)
     pratica = _collega_elemento(session, messaggio, codice, utente)
     if pratica is None:
-        flash(request, "Codice pratica non trovato.", "errore")
+        flash(request, "Codice commessa non trovato.", "errore")
     else:
         flash(request, f"Messaggio collegato a {pratica.codice}.")
     return redirect(ritorno_sicuro(ritorno, "/revisione"))
@@ -575,7 +583,7 @@ def collega_documento(request: Request, documento_id: int, codice: str = Form(""
         raise HTTPException(status_code=404)
     pratica = _collega_elemento(session, documento, codice, utente)
     if pratica is None:
-        flash(request, "Codice pratica non trovato.", "errore")
+        flash(request, "Codice commessa non trovato.", "errore")
     else:
         flash(request, f"Documento collegato a {pratica.codice}.")
     return redirect(ritorno_sicuro(ritorno, "/revisione"))

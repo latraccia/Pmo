@@ -213,6 +213,27 @@ def f_euro(valore: Decimal | float | None) -> str:
     return testo.replace(",", "X").replace(".", ",").replace("X", ".") + " €"
 
 
+def f_numero(valore: Decimal | float | None) -> str:
+    """Quantità o percentuale all'italiana, senza zeri inutili: 2.500 -> "2,5", 1000 -> "1.000"."""
+    if valore is None:
+        return ""
+    testo = f"{Decimal(valore):,f}"
+    if "." in testo:
+        testo = testo.rstrip("0").rstrip(".")
+    return testo.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def f_campo(valore: Decimal | float | None) -> str:
+    """Numero da rimettere in un campo del modulo: virgola decimale e niente separatore delle migliaia, così si
+    rilegge uguale ("1.000" sarebbe uno)."""
+    if valore is None:
+        return ""
+    testo = f"{Decimal(valore):f}"
+    if "." in testo:
+        testo = testo.rstrip("0").rstrip(".")
+    return testo.replace(".", ",")
+
+
 def f_migliaia(valore: Decimal | float | None) -> str:
     """Importo in migliaia di euro per la cifra in evidenza: 46500 -> "46,5", 1250000 -> "1.250"."""
     if valore is None:
@@ -288,7 +309,7 @@ def _versione_statici() -> str:
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters.update(
-    {"data": f_data, "datadt": f_datadt, "ora": f_ora, "euro": f_euro, "migliaia": f_migliaia, "contatori": f_contatori, "esecuzione": f_esecuzione, "stato": f_stato, "evento": f_evento, "giorni_fa": f_giorni_fa}
+    {"data": f_data, "datadt": f_datadt, "ora": f_ora, "euro": f_euro, "numero": f_numero, "campo": f_campo, "migliaia": f_migliaia, "contatori": f_contatori, "esecuzione": f_esecuzione, "stato": f_stato, "evento": f_evento, "giorni_fa": f_giorni_fa}
 )
 templates.env.globals["asset_v"] = _versione_statici()
 templates.env.globals["ETICHETTE_STATO"] = ETICHETTE_STATO

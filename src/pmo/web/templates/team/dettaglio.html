@@ -11,18 +11,18 @@
         <span class="tr-figure__label tr-mono tr-mono--muted">{{ 'membro' if membri | length == 1 else 'membri' }}</span>
       </p>
       <dl class="tr-facts">
-        <div><dt>Pratiche attive</dt><dd>{{ n_pratiche }}</dd></div>
+        <div><dt>Commesse attive</dt><dd>{{ n_pratiche }}</dd></div>
         <div><dt>Caselle</dt><dd>{{ caselle | length }}</dd></div>
         <div><dt>Clienti</dt><dd>{{ clienti | length }}</dd></div>
       </dl>
     </aside>
     <div class="tr-intro__main">
       <h1 class="pmo-titolo">{{ team.nome }}</h1>
-      <p class="tr-intro__lead">{{ team.descrizione or "I membri del team vedono le sue pratiche, le mail delle sue caselle e i documenti collegati." }}</p>
+      <p class="tr-intro__lead">{{ team.descrizione or "I membri del team vedono le sue commesse, le mail delle sue caselle e i documenti collegati." }}</p>
       {% if not team.attivo %}<div class="pmo-scheda__stati pmo-mt-5"><span class="tr-status">Disattivato</span></div>{% endif %}
       <div class="tr-btn-group">
         <a class="tr-btn tr-btn--quiet" href="/impostazioni?scheda=team"><span>Tutti i team</span></a>
-        <a class="tr-btn tr-btn--secondary" href="/pratiche?team_id={{ team.id }}"><span>Pratiche del team</span></a>
+        <a class="tr-btn tr-btn--secondary" href="/pratiche?team_id={{ team.id }}"><span>Commesse del team</span></a>
       </div>
     </div>
   </div>
@@ -49,7 +49,7 @@
     </tbody>
   </table></div>
   {% else %}
-  <p class="tr-card__empty">Nessun membro: aggiungi le persone che lavorano su queste pratiche</p>
+  <p class="tr-card__empty">Nessun membro: aggiungi le persone che lavorano su queste commesse</p>
   {% endif %}
   {% if candidati %}
   <form method="post" action="/impostazioni/team/{{ team.id }}/membri" class="pmo-bar pmo-mt-4">
@@ -107,12 +107,12 @@
 
 <section class="tr-card pmo-section" aria-labelledby="t-pratiche-team">
   <div class="tr-card__head">
-    <h2 class="tr-card__title" id="t-pratiche-team">Le <em>pratiche</em> in corso</h2>
+    <h2 class="tr-card__title" id="t-pratiche-team">Le <em>commesse</em> in corso</h2>
     <span class="tr-card__aside">{% if n_pratiche > pratiche | length %}le {{ pratiche | length }} più recenti di {{ n_pratiche }} · {% endif %}<a href="/pratiche?team_id={{ team.id }}">vedi tutte</a></span>
   </div>
   {% if pratiche %}
   <div class="pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Pratica</th><th>Fase</th><th>Cliente</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
+    <thead><tr><th>Commessa</th><th>Fase</th><th>Cliente</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
     <tbody>
     {% for p in pratiche %}
       <tr>
@@ -126,7 +126,7 @@
     </tbody>
   </table></div>
   {% else %}
-  <p class="tr-card__empty">Nessuna pratica in corso per questo team</p>
+  <p class="tr-card__empty">Nessuna commessa in corso per questo team</p>
   {% endif %}
 </section>
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_ds.html" import eyebrow, campo, area, selezione, fase, da_confermare, stato_sollecito, sollecito, csrf, tappe, scelta_fase with context %}
+{% from "_ds.html" import eyebrow, campo, area, selezione, fase, da_confermare, stato_sollecito, sollecito, csrf, tappe, scelta_fase, conformita with context %}
 {% block titolo %}{{ pratica.codice }} · {{ app_name }}{% endblock %}
 {% block contenuto %}
 {% set proposta = pratica.stato_verifica == 'proposto' %}
@@ -58,7 +58,7 @@
           {% for r in richieste_cliente %}
           <p class="tr-notice__body"><strong>{{ r.data | data }}</strong> · {{ r.data | giorni_fa }} — {{ r.mittente }}: {{ r.titolo }}{% if r.url %} <a href="{{ r.url }}" target="_blank" rel="noopener">Apri la mail</a>{% endif %}</p>
           {% endfor %}
-          <p class="tr-notice__body pmo-muted">Stima automatica: dopo questa mail non ne risulta una nostra sulla pratica. Vede solo le caselle collegate: una risposta data a voce o da un'altra casella non viene riconosciuta.</p>
+          <p class="tr-notice__body pmo-muted">Stima automatica: dopo questa mail non ne risulta una nostra sulla commessa. Vede solo le caselle collegate: una risposta data a voce o da un'altra casella non viene riconosciuta.</p>
         </div>
       </div>
       {% endif %}
@@ -71,7 +71,7 @@
           {% for r in attese_del_cliente %}
           <p class="tr-notice__body"><strong>{{ r.data | data }}</strong> · {{ r.data | giorni_fa }} — {{ r.titolo }}{% if r.controparte %} <span class="pmo-muted">(a {{ r.controparte }})</span>{% endif %}{% if r.url %} <a href="{{ r.url }}" target="_blank" rel="noopener">Apri la mail</a>{% endif %}</p>
           {% endfor %}
-          <p class="tr-notice__body pmo-muted">Stima automatica: dopo la nostra mail non ne risulta una del cliente sulla pratica. Vede solo le caselle collegate: una risposta data a voce o su un'altra casella non viene riconosciuta.</p>
+          <p class="tr-notice__body pmo-muted">Stima automatica: dopo la nostra mail non ne risulta una del cliente sulla commessa. Vede solo le caselle collegate: una risposta data a voce o su un'altra casella non viene riconosciuta.</p>
         </div>
       </div>
       {% endif %}
@@ -81,11 +81,11 @@
         <span class="tr-notice__icon" aria-hidden="true"></span>
         <div class="tr-notice__content">
           <p class="tr-notice__title">Da confermare</p>
-          <p class="tr-notice__body">Questa pratica è stata proposta dall'IA leggendo la posta. Verifica titolo, cliente e prodotto, poi conferma oppure scarta.</p>
+          <p class="tr-notice__body">Questa commessa è stata proposta dall'IA leggendo la posta. Verifica titolo, cliente e prodotto, poi conferma oppure scarta.</p>
           {% if puo(utente, 'confermare') %}
           <div class="tr-btn-group pmo-notice-actions">
-            <form method="post" action="/pratiche/{{ pratica.id }}/conferma">{{ csrf() }}<button class="tr-btn tr-btn--primary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma pratica</span></button></form>
-            <form method="post" action="/pratiche/{{ pratica.id }}/scarta" data-conferma="Scartare la pratica proposta? I messaggi torneranno in revisione.">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Scarta</button></form>
+            <form method="post" action="/pratiche/{{ pratica.id }}/conferma">{{ csrf() }}<button class="tr-btn tr-btn--primary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma commessa</span></button></form>
+            <form method="post" action="/pratiche/{{ pratica.id }}/scarta" data-conferma="Scartare la commessa proposta? I messaggi torneranno in revisione.">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Scarta</button></form>
           </div>
           {% endif %}
         </div>
@@ -95,7 +95,7 @@
   </div>
 
   {% if pratica.stato in FASI %}
-  <section class="pmo-tappe" aria-label="Fasi della pratica">{{ tappe(pratica) }}</section>
+  <section class="pmo-tappe" aria-label="Fasi della commessa">{{ tappe(pratica) }}</section>
   {% endif %}
 </div>
 
@@ -108,6 +108,7 @@
   ("messaggi", "Messaggi", messaggi | length),
   ("documenti", "Documenti", documenti | length),
   ("solleciti", "Solleciti", aperti | length),
+  ("ordini", "Offerte e ordini", pratica.ordini | length),
   ("scheda", "Scheda", none)] %}
 
 <div class="pmo-viste" data-viste>
@@ -276,6 +277,82 @@
     {% else %}<p class="tr-card__empty">Nessun sollecito</p>{% endif %}
   </section>
 
+  {# ---- Offerte e ordini ---- #}
+  <section class="tr-card pmo-vista" id="vista-ordini" role="tabpanel" aria-labelledby="tab-ordini">
+    <div class="tr-card__head">
+      <h2 class="tr-card__title">Offerte e <em>ordini</em></h2>
+      <span class="tr-card__aside">importi netti, IVA esclusa</span>
+    </div>
+    {%- set gestione_ordini = puo(utente, 'gestire_ordini') -%}
+    {{ eyebrow("Offerte", pratica.offerte | length) }}
+    {% if pratica.offerte %}
+    <div class="pmo-scroll"><table class="pmo-table">
+      <thead><tr><th>Offerta</th><th>Cliente</th><th>Revisione</th><th>Stato</th><th class="pmo-num">Totale</th><th class="pmo-num">Residuo da ordinare</th></tr></thead>
+      <tbody>
+      {% for o in pratica.offerte %}
+        {%- set r = o.revisione_accettata or o.ultima_revisione -%}
+        <tr>
+          <td><a class="pmo-title-cell" href="/offerte/{{ o.id }}">{{ o.nome }}</a>{% if o.titolo and o.numero %}<p class="pmo-dato">{{ o.titolo }}</p>{% endif %}</td>
+          <td>{{ o.cliente.nome if o.cliente else '-' }}</td>
+          <td>{{ ('rev. ' ~ r.numero_revisione) if r else '-' }}</td>
+          <td>{{ r.etichetta_stato if r else '-' }}</td>
+          <td class="pmo-num">{{ (r.totale if r else none) | euro }}</td>
+          <td class="pmo-num">{{ residui_offerte.get(r.id) | euro if r and r.id in residui_offerte else '-' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="tr-card__empty">Nessuna offerta</p>{% endif %}
+    {% if gestione_ordini %}
+    <details class="pmo-details pmo-mt-4">
+      <summary><span class="pmo-details__label">Nuova offerta</span></summary>
+      <form method="post" action="/pratiche/{{ pratica.id }}/offerte" class="pmo-details__body">
+        {{ csrf() }}
+        <div class="pmo-grid">
+          {% call selezione("cliente_id", "Cliente *", aiuto="Obbligatorio; di norma quello della commessa") %}<option value="">Scegli il cliente</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if pratica.cliente_id == c.id }}>{{ c.nome }}</option>{% endfor %}{% endcall %}
+          {{ campo("numero", "Numero", segnaposto="OFF-2026-12") }}
+          {{ campo("titolo", "Titolo", segnaposto="Fornitura moduli A, B e C") }}
+          {{ campo("data", "Data", tipo="date") }}
+        </div>
+        <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea l'offerta</span></button></div>
+      </form>
+    </details>
+    {% endif %}
+
+    <div class="pmo-mt-6">{{ eyebrow("Ordini", pratica.ordini | length) }}</div>
+    {% if pratica.ordini %}
+    <div class="pmo-scroll"><table class="pmo-table">
+      <thead><tr><th>Ordine</th><th class="pmo-num">Totale</th><th>Conformità</th><th class="pmo-num">Residuo offerta</th><th>Avanzamento</th><th>Attesa</th></tr></thead>
+      <tbody>
+      {% for o in pratica.ordini %}
+        <tr>
+          <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} {{ da_confermare() }}{% endif %}</td>
+          <td class="pmo-num">{{ o.totale | euro }}</td>
+          <td>{{ conformita(o) }}</td>
+          <td class="pmo-num">{{ (o.esito_verifica or {}).get('residuo') | euro if (o.esito_verifica or {}).get('residuo') else '-' }}</td>
+          <td>{{ o.etichetta_avanzamento }}</td>
+          <td>{{ o.etichetta_attesa if o.attesa != 'nessuna' else '-' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="tr-card__empty">Nessun ordine</p>{% endif %}
+    {% if gestione_ordini %}
+    <details class="pmo-details pmo-mt-4">
+      <summary><span class="pmo-details__label">Nuovo ordine</span></summary>
+      <form method="post" action="/pratiche/{{ pratica.id }}/ordini" class="pmo-details__body">
+        {{ csrf() }}
+        <div class="pmo-grid">
+          {{ campo("numero", "Numero d'ordine del cliente", segnaposto="4500123456") }}
+          {{ campo("data_ordine", "Data", tipo="date") }}
+          {{ campo("riferimento_offerta", "Offerta citata nell'ordine", segnaposto="OFF-2026-12") }}
+        </div>
+        <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea l'ordine</span></button></div>
+      </form>
+    </details>
+    {% endif %}
+  </section>
+
   {# ---- Scheda ---- #}
   <section class="tr-card pmo-vista" id="vista-scheda" role="tabpanel" aria-labelledby="tab-scheda">
     <div class="tr-card__head">
@@ -305,12 +382,14 @@
           {% call selezione("priorita", "Priorità") %}{% for v, t in [('alta', 'Alta'), ('media', 'Media'), ('bassa', 'Bassa')] %}<option value="{{ v }}" {{ 'selected' if pratica.priorita == v }}>{{ t }}</option>{% endfor %}{% endcall %}
           {{ campo("data_scadenza", "Scadenza", pratica.data_scadenza.isoformat() if pratica.data_scadenza else '', tipo="date") }}
           {{ campo("importo_stima", "Stima (€)", pratica.importo_stima or '', segnaposto="12.000,00") }}
-          {{ campo("importo_offerta", "Offerta (€)", pratica.importo_offerta or '', segnaposto="12.000,00") }}
-          {{ campo("importo_ordine", "Ordine (€)", pratica.importo_ordine or '', segnaposto="12.000,00") }}
+          {% if importi_calcolati.importo_offerta %}{{ campo("importo_offerta", "Offerta (€)", pratica.importo_offerta | campo, aiuto="Totale delle revisioni accettate", attr="readonly") }}
+          {% else %}{{ campo("importo_offerta", "Offerta (€)", pratica.importo_offerta or '', segnaposto="12.000,00") }}{% endif %}
+          {% if importi_calcolati.importo_ordine %}{{ campo("importo_ordine", "Ordine (€)", pratica.importo_ordine | campo, aiuto="Somma degli ordini", attr="readonly") }}
+          {% else %}{{ campo("importo_ordine", "Ordine (€)", pratica.importo_ordine or '', segnaposto="12.000,00") }}{% endif %}
           {{ campo("importo_fatturato", "Fatturato (€)", pratica.importo_fatturato or '', segnaposto="12.000,00") }}
         </div>
         {{ area("riferimenti", "Riferimenti", riferimenti_testo, aiuto="Una riga per voce, nella forma chiave=valore", segnaposto="numero_ordine=4500123") }}
-        {{ campo("drive_folder_url", "Cartella Drive della pratica", pratica.drive_folder_url or '', segnaposto="https://drive.google.com/drive/folders/…") }}
+        {{ campo("drive_folder_url", "Cartella Drive della commessa", pratica.drive_folder_url or '', segnaposto="https://drive.google.com/drive/folders/…") }}
         {{ area("note", "Note", pratica.note) }}
       </div>
       <div class="tr-card__foot">
@@ -328,8 +407,8 @@
 
     {% if puo(utente, 'unire') %}
     <details class="pmo-details pmo-mt-5">
-      <summary><span class="pmo-details__label">Unisci a un'altra pratica (doppione)</span></summary>
-      <form method="post" action="/pratiche/{{ pratica.id }}/unisci" class="pmo-details__body pmo-inline" data-conferma="Spostare eventi, messaggi e documenti nella pratica indicata e annullare questa?">
+      <summary><span class="pmo-details__label">Unisci a un'altra commessa (doppione)</span></summary>
+      <form method="post" action="/pratiche/{{ pratica.id }}/unisci" class="pmo-details__body pmo-inline" data-conferma="Spostare eventi, messaggi e documenti nella commessa indicata e annullare questa?">
         {{ csrf() }}
         {{ campo("codice", "Destinazione", obbligatorio=true, compatto=true, largo=true, segnaposto="PMO-AAAA-NNNN") }}
         <button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Unisci</button>
@@ -343,7 +422,7 @@
     laterale (stessa altezza, stesso filetto) fino al bordo della pagina. Le tabs stanno sulla
     colonna del contenuto; il filetto della tab scelta sta sopra e punta al contenuto. -#}
 <div class="pmo-viste-barra">
-  <div class="tr-tabs tr-tabs--bottom pmo-container" role="tablist" aria-label="Viste della pratica">
+  <div class="tr-tabs tr-tabs--bottom pmo-container" role="tablist" aria-label="Viste della commessa">
     {% for k, etichetta, n in viste %}
     <button class="tr-tab" type="button" role="tab" id="tab-{{ k }}" aria-controls="vista-{{ k }}" aria-selected="{{ 'true' if loop.first else 'false' }}"{% if not loop.first %} tabindex="-1"{% endif %}>{{ etichetta }}{% if n is not none %} <span class="tr-tab__count">{{ n }}</span>{% endif %}</button>
     {% endfor %}

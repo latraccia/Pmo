@@ -15,7 +15,7 @@
 
     <div class="tr-intro__main">
       <h1 class="tr-h3 tr-intro__title">I <em>clienti</em></h1>
-      <p class="tr-intro__lead">Anagrafica, referenti e codici nei sistemi aziendali. Domini e indirizzi dei referenti aiutano l'IA a collegare le mail alle pratiche giuste.</p>
+      <p class="tr-intro__lead">Anagrafica, referenti e codici nei sistemi aziendali. Domini e indirizzi dei referenti aiutano l'IA a collegare le mail alle commesse giuste.</p>
       <form method="get" aria-label="Filtri">
         <div class="pmo-grid">
           {{ campo("q", "Cerca", filtri.q, segnaposto="nome, ragione sociale, P.IVA, città, codici", icona="search") }}
@@ -49,7 +49,7 @@
 <section class="pmo-section" aria-label="Elenco dei clienti">
   {% if clienti %}
   <div class="tr-panel pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Cliente</th><th>Tipo</th><th>P.IVA</th><th>Città</th><th>Team</th><th>Referenti</th><th>Pratiche attive</th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Tipo</th><th>P.IVA</th><th>Città</th><th>Team</th><th>Referenti</th><th>Commesse attive</th></tr></thead>
     <tbody>
     {% for c in clienti %}
       <tr>

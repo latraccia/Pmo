@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, selezione, spunta, paginazione with context %}
+{% block titolo %}Offerte · {{ app_name }}{% endblock %}
+{% block contenuto %}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Offerte") }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ pagina.totale }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">offerte<br>{{ 'in elenco' if filtri.tutte else 'su commesse aperte' }}</span>
+      </p>
+    </aside>
+    <div class="tr-intro__main">
+      <h1 class="tr-h3 tr-intro__title">Le <em>offerte</em></h1>
+      <p class="tr-intro__lead">Tutte le offerte delle commesse che vedi, con la revisione che conta (l'accettata, altrimenti l'ultima), il totale e quanto resta da ordinare. Un'offerta nuova si crea dalla sua commessa, nella scheda «Offerte e ordini».</p>
+      <form method="get" aria-label="Filtri">
+        <div class="pmo-grid">
+          {{ campo("q", "Cerca", filtri.q, segnaposto="numero o titolo dell'offerta, codice o titolo della commessa", icona="search") }}
+          {% call selezione("cliente_id", "Cliente") %}<option value="">Tutti</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if filtri.cliente_id == c.id | string }}>{{ c.nome }}</option>{% endfor %}{% endcall %}
+          {% call selezione("team_id", "Team") %}<option value="">Tutti</option>{% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if filtri.team_id == t.id | string }}>{{ t.nome }}</option>{% endfor %}{% endcall %}
+          {% call selezione("stato", "Stato") %}<option value="">Tutti</option>{% for v, t in stati %}<option value="{{ v }}" {{ 'selected' if filtri.stato == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+        </div>
+        <div class="pmo-checks pmo-mt-4">{{ spunta("tutte", "Includi le offerte delle commesse chiuse e annullate", filtri.tutte) }}</div>
+        <div class="tr-btn-group pmo-mt-4">
+          <button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Filtra</button>
+          {% if filtri.values() | select | list %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/offerte">Azzera</a>{% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<section class="pmo-section" aria-label="Elenco delle offerte">
+  {% if righe %}
+  <div class="tr-panel pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Offerta</th><th>Cliente</th><th>Commessa</th><th>Revisione</th><th class="pmo-num">Totale</th><th class="pmo-num">Residuo da ordinare</th><th class="pmo-num">Ordini</th></tr></thead>
+    <tbody>
+    {% for r in righe %}
+      {%- set o = r.offerta -%}
+      <tr>
+        <td><a class="pmo-title-cell" href="/offerte/{{ o.id }}">{{ o.nome }}</a>{% if o.titolo and o.numero %}<p class="pmo-dato">{{ o.titolo }}</p>{% endif %}</td>
+        <td>{{ o.cliente.nome if o.cliente else '-' }}</td>
+        <td><a href="/pratiche/{{ o.pratica_id }}">{{ o.pratica.codice }}</a><p class="pmo-dato">{{ o.pratica.titolo }}</p></td>
+        <td>{% if r.revisione %}rev. {{ r.revisione.numero_revisione }} · {{ r.revisione.etichetta_stato }}{% if r.revisione.data %}<p class="pmo-dato">{{ r.revisione.data | data }}</p>{% endif %}{% else %}-{% endif %}</td>
+        <td class="pmo-num">{{ (r.revisione.totale if r.revisione else none) | euro }}</td>
+        <td class="pmo-num">{{ r.residuo | euro if r.residuo is not none else '-' }}</td>
+        <td class="pmo-num">{{ r.ordini }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {{ paginazione(pagina) }}
+  {% else %}
+  <div class="tr-panel"><p class="tr-card__empty">Nessuna offerta trovata</p></div>
+  {% endif %}
+</section>
+{% endblock %}

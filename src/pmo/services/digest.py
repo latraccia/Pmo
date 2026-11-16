@@ -97,11 +97,11 @@ def componi_digest(
     righe_html: list[str] = [f"<h2>Notifiche {html.escape(settings.app_name)} del {oggi.strftime('%d/%m/%Y')}</h2>"]
     righe_txt.append(
         f"Solleciti aperti: {contatori['solleciti']} (nuovi: {contatori['nuovi']}, critici: {contatori['critici']}). "
-        f"Da verificare: {contatori['da_rivedere']} messaggi/documenti, {contatori['pratiche_proposte']} pratiche proposte."
+        f"Da verificare: {contatori['da_rivedere']} messaggi/documenti, {contatori['pratiche_proposte']} commesse proposte."
     )
     righe_html.append(
         f"<p>Solleciti aperti: <b>{contatori['solleciti']}</b> (nuovi: {contatori['nuovi']}, critici: {contatori['critici']}). "
-        f"Da verificare: <b>{contatori['da_rivedere']}</b> messaggi/documenti, <b>{contatori['pratiche_proposte']}</b> pratiche proposte "
+        f"Da verificare: <b>{contatori['da_rivedere']}</b> messaggi/documenti, <b>{contatori['pratiche_proposte']}</b> commesse proposte "
         f"&rarr; <a href='{base}/revisione'>coda di revisione</a>.</p>"
     )
     gravita_corrente = None

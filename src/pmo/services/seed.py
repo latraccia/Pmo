@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pmo.db.models import Cliente, ContattoCliente, Prodotto, Team, User
+from pmo.db.models import Articolo, Cliente, ContattoCliente, Prodotto, Team, User
 from pmo.permessi import ruolo_valido
 from pmo.rules.definitions import assicura_regole
 
@@ -25,7 +26,7 @@ def percorso_seed_default() -> Path:
 def carica_seed(session: Session, percorso: Path | None = None) -> dict[str, int]:
     percorso = percorso or percorso_seed_default()
     dati = yaml.safe_load(percorso.read_text(encoding="utf-8")) or {}
-    contatori = {"utenti": 0, "team": 0, "prodotti": 0, "clienti": 0, "regole": 0}
+    contatori = {"utenti": 0, "team": 0, "prodotti": 0, "articoli": 0, "clienti": 0, "regole": 0}
 
     for spec in dati.get("utenti", []) or []:
         email = spec["email"].strip().lower()
@@ -67,6 +68,25 @@ def carica_seed(session: Session, percorso: Path | None = None) -> dict[str, int
             contatori["prodotti"] += 1
         prodotto.alias = list(spec.get("alias") or [])
         prodotto.descrizione = spec.get("descrizione") or ""
+
+    for spec in dati.get("articoli", []) or []:
+        codice = str(spec["codice"]).strip()
+        articolo = session.scalar(select(Articolo).where(Articolo.codice == codice))
+        if articolo is None:
+            articolo = Articolo(codice=codice)
+            session.add(articolo)
+            contatori["articoli"] += 1
+        articolo.descrizione = spec.get("descrizione") or ""
+        articolo.unita = str(spec.get("unita") or "")
+        articolo.prezzo_listino = Decimal(str(spec["prezzo"])) if spec.get("prezzo") is not None else None
+        articolo.aliquota_iva = Decimal(str(spec["iva"])) if spec.get("iva") is not None else None
+        articolo.attivo = bool(spec.get("attivo", True))
+        if spec.get("prodotto"):
+            session.flush()
+            prodotto = session.scalar(select(Prodotto).where(Prodotto.nome == str(spec["prodotto"]).strip()))
+            if prodotto is None:
+                raise ValueError(f"Articolo {codice}: prodotto '{spec['prodotto']}' non presente in seed.yaml")
+            articolo.prodotto_id = prodotto.id
 
     for spec in dati.get("clienti", []) or []:
         nome = spec["nome"].strip()

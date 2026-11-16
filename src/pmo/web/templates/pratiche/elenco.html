@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_ds.html" import eyebrow, campo, selezione, spunta, fase, gravita, da_confermare, paginazione, csrf, scelta_fase with context %}
-{% block titolo %}Pratiche · {{ app_name }}{% endblock %}
+{% block titolo %}Commesse · {{ app_name }}{% endblock %}
 {% block contenuto %}
 {#- L'indirizzo di questa pagina con i suoi filtri: il cambio di fase di una scheda torna qui. -#}
 {%- set ritorno = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') -%}
@@ -10,10 +10,10 @@
 <div class="tr-panel">
   <div class="tr-intro">
     <aside class="tr-intro__aside">
-      {{ eyebrow("Pratiche") }}
+      {{ eyebrow("Commesse") }}
       <p class="tr-figure">
         <span class="tr-figure__number">{{ riepilogo.totale }}</span>
-        <span class="tr-figure__label tr-mono tr-mono--muted">pratiche<br>{{ 'trovate' if filtrato else 'attive' }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">commesse<br>{{ 'trovate' if filtrato else 'attive' }}</span>
       </p>
       <dl class="tr-facts">
         <div><dt>Proposte IA</dt><dd>{{ riepilogo.proposte }}</dd></div>
@@ -26,10 +26,10 @@
     </aside>
 
     <div class="tr-intro__main">
-      <h1 class="tr-h3 tr-intro__title">Tutte le <em>pratiche</em></h1>
-      <p class="tr-intro__lead">Ogni pratica segue un lavoro dalla stima alla fattura. Cerca per codice, titolo, cliente o prodotto (più parole restringono la ricerca), oppure filtra per fase, cliente, prodotto, responsabile e azioni da fare.</p>
+      <h1 class="tr-h3 tr-intro__title">Tutte le <em>commesse</em></h1>
+      <p class="tr-intro__lead">Ogni commessa segue un lavoro dalla stima alla fattura. Cerca per codice, titolo, cliente o prodotto (più parole restringono la ricerca), oppure filtra per fase, cliente, prodotto, responsabile e azioni da fare.</p>
       <div class="tr-btn-group">
-        {% if puo(utente, 'creare_pratica') %}<a class="tr-btn tr-btn--primary" href="/pratiche/nuova"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Nuova pratica</span></a>{% endif %}
+        {% if puo(utente, 'creare_pratica') %}<a class="tr-btn tr-btn--primary" href="/pratiche/nuova"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Nuova commessa</span></a>{% endif %}
       </div>
 
       {#- Chi aspetta chi: scorciatoie sui filtri, con i numeri di tutte le pratiche attive. -#}
@@ -40,7 +40,7 @@
           <span class="pmo-tessera__etichetta">{{ etichetta }}</span>
         </a>
         {% endfor %}
-        {% if filtri.azione in ('risposta', 'attesa_cliente', 'attese') %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/pratiche">Tutte le pratiche</a>{% endif %}
+        {% if filtri.azione in ('risposta', 'attesa_cliente', 'attese') %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/pratiche">Tutte le commesse</a>{% endif %}
       </div>
 
       <form method="get" aria-label="Filtri">
@@ -76,7 +76,7 @@
           <option value="confermate" {{ 'selected' if filtri.verifica == 'confermate' }}>Solo confermate</option>
           {% endcall %}
           {% call selezione("azione", "Azioni da fare") %}
-            <option value="">Tutte le pratiche</option>
+            <option value="">Tutte le commesse</option>
             {% for k, v in azioni_da_fare.items() %}<option value="{{ k }}" {{ 'selected' if filtri.azione == k }}>{{ v }}</option>{% endfor %}
           {% endcall %}
         </div>
@@ -92,7 +92,7 @@
   </div>
 </div>
 
-<section aria-label="Elenco delle pratiche">
+<section aria-label="Elenco delle commesse">
   {% if pratiche %}
   <div class="tr-card-grid pmo-schede">
     {% for p in pratiche %}
@@ -174,7 +174,7 @@
   </div>
   {{ paginazione(pagina) }}
   {% else %}
-  <div class="tr-panel"><p class="tr-card__empty">Nessuna pratica trovata</p></div>
+  <div class="tr-panel"><p class="tr-card__empty">Nessuna commessa trovata</p></div>
   {% endif %}
 </section>
 {% endblock %}

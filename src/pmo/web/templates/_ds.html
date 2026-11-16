@@ -82,6 +82,12 @@
     per tutte le fasi, comprese chiusa e annullata. -#}
 {%- macro fase(stato) -%}<span class="tr-chip">{{ stato | stato }}</span>{%- endmacro -%}
 
+{#- Conformita' di un ordine all'offerta: stato semantico, sempre col testo. -#}
+{%- macro conformita(o) -%}
+{%- set famiglia = "warning" if o.derogato else {"conforme": "success", "scostamenti": "danger", "non_determinabile": "warning"}.get(o.conformita) -%}
+<span class="tr-status{{ ' tr-status--' ~ famiglia if famiglia }}">{{ o.etichetta_conformita }}</span>
+{%- endmacro -%}
+
 {#- Gravita' di un sollecito: stato semantico, sempre col testo. -#}
 {%- macro gravita(g) -%}
 {%- set famiglia = {"critico": "danger", "avviso": "warning", "info": "info"}.get(g) -%}
@@ -130,7 +136,7 @@
     cronologia e' "una storia": tutto pieno. Annullate e sospese non la mostrano affatto. -#}
 {%- macro tappe(pratica) -%}
 {%- set corrente = pratica.stato if pratica.stato in FASI and pratica.stato != "chiusa" else none -%}
-<ol class="tr-timeline tr-timeline--row" aria-label="Fasi della pratica">
+<ol class="tr-timeline tr-timeline--row" aria-label="Fasi della commessa">
   {%- for f in FASI if f != "chiusa" %}
   <li class="tr-timeline__event"{% if f == corrente %} aria-current="step"{% endif %}>
     {% if f == corrente %}<time class="tr-timeline__when" datetime="{{ pratica.stato_dal.isoformat() if pratica.stato_dal else '' }}">{{ pratica.stato_dal | data }}</time>{% else %}<span class="tr-timeline__when" aria-hidden="true">&nbsp;</span>{% endif %}

@@ -13,6 +13,7 @@ Vale solo per le pratiche **confermate** e non annullate/sospese. Per le pratich
 | `scadenza_superata` | Scadenza superata | scadenza passata e pratica non chiusa | 0 | critico |
 | `consegnato_non_fatturato` | Consegnato ma non fatturato | stato `consegna` da N giorni (una fattura emessa porta a `fatturazione`) | 30 | critico |
 | `fatturato_diverso_da_ordinato` | Fatturato diverso dall'ordinato | pratica in `fatturazione`/`chiusa` con fatturato e ordinato che differiscono oltre la tolleranza (`tolleranza_percento`, `tolleranza_euro`) | - | avviso |
+| `ordine_con_scostamenti` | Ordine diverso dall'offerta | un ordine confermato e non annullato ha esito "scostamenti" senza deroga. `tolleranza_percento` e `tolleranza_euro` sono anche la tolleranza usata dalla verifica degli ordini | - | avviso |
 | `pratica_inattiva` | Pratica ferma | nessun evento da N giorni (riferimento: ultimo evento non di sistema, altrimenti data dello stato) | 30 | info |
 | `da_verificare` | Elementi da verificare | pratica proposta o eventi proposti dall'IA creati da più di N giorni | 3 | info |
 
@@ -30,3 +31,20 @@ La notifica email giornaliera (nel codice "digest") elenca i solleciti aperti e 
 1. Aggiungere la specifica in `rules/definitions.py` (`REGOLE_DEFAULT`): viene creata al prossimo `pmo init-db` o alla prima esecuzione.
 2. Aggiungere la valutazione in `valuta_pratica` (`rules/engine.py`) restituendo un `Esito` con titolo e messaggio in italiano.
 3. Aggiungere un test in `tests/test_regole.py`.
+
+## Verifica dell'ordine contro l'offerta
+
+La verifica (`services/verifica_ordini.py`) non usa l'IA e si rifà a ogni modifica delle righe dell'ordine o dell'offerta.
+L'ordine si confronta con la revisione d'offerta indicata sull'ordine o, se manca, con l'ultima revisione accettata della commessa.
+
+1. **Abbinamento delle righe**: prima l'abbinamento scelto a mano nella pagina dell'ordine, poi lo stesso articolo del listino, poi stesso prodotto e modulo, poi stessa descrizione (senza maiuscole e punteggiatura).
+2. **Cliente e riferimenti**: il cliente dell'offerta deve essere quello della commessa dell'ordine; il numero d'offerta citato nell'ordine deve essere quello dell'offerta.
+3. **Perimetro**: una riga senza corrispondenza è "non prevista dall'offerta"; una quantità oltre quanto resta della riga d'offerta, contando gli altri ordini confermati e non annullati, è uno scostamento.
+4. **Importi**: il totale della riga si confronta con il prezzo netto offerto per la stessa quantità; la tolleranza è il maggiore tra `tolleranza_euro` e `tolleranza_percento` della regola `ordine_con_scostamenti`.
+5. **Condizioni**: se offerta e ordine le indicano entrambe e sono diverse, è uno scostamento da verificare.
+
+Esito: **conforme**, **scostamenti**, oppure **non determinabile** (manca l'offerta, mancano righe, quantità o prezzi). Un ordine è **parziale** quando restano righe d'offerta da ordinare: il residuo non autorizza attività.
+
+**Deroga.** Responsabile, commerciale, direzione e amministratore possono accettare un ordine con scostamenti indicando il motivo; la cronologia registra autore e data. Se una verifica successiva dà un esito diverso, la deroga decade e la cronologia lo segnala.
+
+**Esempio.** Offerta da 30.000 € (A 10.000, B 12.000, C 8.000), ordine da 18.000 € per A e C: conforme, parziale, residuo 12.000 € sulla riga B.

@@ -59,6 +59,14 @@ REGOLE_DEFAULT: list[dict] = [
         "parametri": {"tolleranza_percento": 1.0, "tolleranza_euro": 1.0},
     },
     {
+        "codice": "ordine_con_scostamenti",
+        "nome": "Ordine diverso dall'offerta",
+        "descrizione": "Un ordine verificato contro l'offerta ha scostamenti e nessuna deroga. I parametri sono anche la tolleranza della verifica (il maggiore tra euro e percentuale).",
+        "soglia_giorni": None,
+        "gravita": Gravita.AVVISO,
+        "parametri": {"tolleranza_percento": 1.0, "tolleranza_euro": 1.0},
+    },
+    {
         "codice": "pratica_inattiva",
         "nome": "Pratica ferma",
         "descrizione": "Nessun evento registrato da più di N giorni su una pratica attiva.",

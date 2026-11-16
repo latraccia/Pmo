@@ -154,6 +154,9 @@ def test_dettaglio_pratica(dati):
     assert d["documenti"][0]["nome"] == "Specifiche v2.docx"
     assert d["solleciti_aperti_dettaglio"][0]["gravita"] == "critico"
     assert d["totali"]["documenti"] == 1
+    # l'ordine ricevuto è diventato un ordine con una riga da dettagliare
+    assert d["ordini"][0]["totale"] == 11500 and d["ordini"][0]["righe"][0]["descrizione"] == "Da dettagliare"
+    assert d["ordini"][0]["conformita"] == "Da verificare" and d["offerte"] == []
 
 
 def test_pratica_inesistente_da_errore_leggibile(dati):

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_ds.html" import eyebrow, campo, selezione, spunta, paginazione, conformita with context %}
+{% block titolo %}Ordini · {{ app_name }}{% endblock %}
+{% block contenuto %}
+<div class="tr-panel">
+  <div class="tr-intro">
+    <aside class="tr-intro__aside">
+      {{ eyebrow("Ordini") }}
+      <p class="tr-figure">
+        <span class="tr-figure__number">{{ ordinato | migliaia }}</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">migliaia di euro<br>ordinati</span>
+      </p>
+      <dl class="tr-facts">
+        <div><dt>Ordini</dt><dd>{{ pagina.totale }}</dd></div>
+      </dl>
+    </aside>
+    <div class="tr-intro__main">
+      <h1 class="tr-h3 tr-intro__title">Il <em>portafoglio</em> ordini</h1>
+      <p class="tr-intro__lead">Tutti gli ordini delle commesse che vedi, con la conformità all'offerta, l'avanzamento e chi aspetta chi.</p>
+      <form method="get" aria-label="Filtri">
+        <div class="pmo-grid">
+          {{ campo("q", "Cerca", filtri.q, segnaposto="numero d'ordine, codice o titolo della commessa", icona="search") }}
+          {% call selezione("team_id", "Team") %}<option value="">Tutti</option>{% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if filtri.team_id == t.id | string }}>{{ t.nome }}</option>{% endfor %}{% endcall %}
+          {% call selezione("cliente_id", "Cliente") %}<option value="">Tutti</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if filtri.cliente_id == c.id | string }}>{{ c.nome }}</option>{% endfor %}{% endcall %}
+          {% call selezione("conformita", "Conformità") %}<option value="">Tutte</option>{% for v, t in conformita_opzioni %}<option value="{{ v }}" {{ 'selected' if filtri.conformita == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+          {% call selezione("avanzamento", "Avanzamento") %}<option value="">Tutti</option>{% for v, t in avanzamenti %}<option value="{{ v }}" {{ 'selected' if filtri.avanzamento == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+          {% call selezione("attesa", "Attesa") %}<option value="">Tutte</option>{% for v, t in attese %}<option value="{{ v }}" {{ 'selected' if filtri.attesa == v }}>{{ t }}</option>{% endfor %}{% endcall %}
+        </div>
+        <div class="pmo-checks pmo-mt-4">{{ spunta("tutti", "Includi ordini chiusi e annullati e commesse concluse", filtri.tutti) }}</div>
+        <div class="tr-btn-group pmo-mt-4">
+          <button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Filtra</button>
+          {% if filtri.values() | select | list %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/ordini">Azzera</a>{% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<section class="pmo-section" aria-label="Elenco degli ordini">
+  {% if ordini %}
+  <div class="tr-panel pmo-scroll"><table class="pmo-table">
+    <thead><tr><th>Ordine</th><th>Commessa</th><th>Cliente</th><th class="pmo-num">Totale</th><th>Conformità</th><th class="pmo-num">Residuo offerta</th><th>Avanzamento</th><th>Attesa</th></tr></thead>
+    <tbody>
+    {% for o in ordini %}
+      <tr>
+        <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} <span class="tr-status tr-status--warning">Da confermare</span>{% endif %}</td>
+        <td><a href="/pratiche/{{ o.pratica_id }}">{{ o.pratica.codice }}</a><p class="pmo-dato">{{ o.pratica.titolo }}</p></td>
+        <td>{{ o.pratica.cliente.nome if o.pratica.cliente else '-' }}</td>
+        <td class="pmo-num">{{ o.totale | euro }}</td>
+        <td>{{ conformita(o) }}</td>
+        <td class="pmo-num">{{ (o.esito_verifica or {}).get('residuo') | euro if (o.esito_verifica or {}).get('residuo') else '-' }}</td>
+        <td>{{ o.etichetta_avanzamento }}</td>
+        <td>{% if o.attesa != 'nessuna' %}{{ o.etichetta_attesa }}{% if o.attesa_dal %}<p class="pmo-dato">dal {{ o.attesa_dal | data }}</p>{% endif %}{% else %}-{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {{ paginazione(pagina) }}
+  {% else %}
+  <div class="tr-panel"><p class="tr-card__empty">Nessun ordine trovato</p></div>
+  {% endif %}
+</section>
+{% endblock %}

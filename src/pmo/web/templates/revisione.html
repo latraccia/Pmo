@@ -2,12 +2,12 @@
 {% from "_ds.html" import eyebrow, campo, fase, da_confermare, csrf, paginazione with context %}
 {% block titolo %}Revisione · {{ app_name }}{% endblock %}
 {% block contenuto %}
-{% set schede = [('pratiche', 'Pratiche proposte'), ('messaggi', 'Mail da verificare'), ('documenti', 'Documenti da verificare'), ('errori', 'Errori')] %}
+{% set schede = [('pratiche', 'Commesse proposte'), ('messaggi', 'Mail da verificare'), ('documenti', 'Documenti da verificare'), ('errori', 'Errori')] %}
 {% set totale = conteggi.pratiche + conteggi.messaggi + conteggi.documenti %}
 {% set guida = {
-  'pratiche': "L'IA ha riconosciuto in queste mail pratiche non ancora registrate. Confermandole, gli eventi estratti diventano effettivi; scartandole, i messaggi tornano qui per essere collegati a mano.",
-  'messaggi': "Mail rilevanti che l'IA non ha saputo collegare con certezza. Conferma il collegamento proposto, indica la pratica giusta oppure ignora.",
-  'documenti': "Documenti di Drive che l'IA ha letto ma non ha collegato con certezza a una pratica. Conferma la proposta, indica la pratica giusta oppure ignora.",
+  'pratiche': "L'IA ha riconosciuto in queste mail commesse non ancora registrate. Confermandole, gli eventi estratti diventano effettivi; scartandole, i messaggi tornano qui per essere collegati a mano.",
+  'messaggi': "Mail rilevanti che l'IA non ha saputo collegare con certezza. Conferma il collegamento proposto, indica la commessa giusta oppure ignora.",
+  'documenti': "Documenti di Drive che l'IA ha letto ma non ha collegato con certezza a una commessa. Conferma la proposta, indica la commessa giusta oppure ignora.",
   'errori': "Messaggi che la classificazione non è riuscita a elaborare. Si possono rimettere in coda: verranno ritentati al prossimo giro."} %}
 
 {#- La testata della pagina sul suo piano bianco, chiusa dalla fila delle code. -#}
@@ -20,7 +20,7 @@
         <span class="tr-figure__label tr-mono tr-mono--muted">elementi<br>da verificare</span>
       </p>
       <dl class="tr-facts">
-        <div><dt>Pratiche</dt><dd>{{ conteggi.pratiche }}</dd></div>
+        <div><dt>Commesse</dt><dd>{{ conteggi.pratiche }}</dd></div>
         <div><dt>Mail</dt><dd>{{ conteggi.messaggi }}</dd></div>
         <div><dt>Documenti</dt><dd>{{ conteggi.documenti }}</dd></div>
       </dl>
@@ -65,16 +65,16 @@
       <div class="tr-card__foot">
         <details class="pmo-details">
           <summary><span class="pmo-details__label">Unisci a…</span></summary>
-          <form method="post" action="/pratiche/{{ p.id }}/unisci" class="pmo-details__body pmo-inline" data-conferma="Unire alla pratica indicata?">{{ csrf() }}{{ campo("codice", "Unisci alla pratica", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit">Unisci</button></form>
+          <form method="post" action="/pratiche/{{ p.id }}/unisci" class="pmo-details__body pmo-inline" data-conferma="Unire alla commessa indicata?">{{ csrf() }}{{ campo("codice", "Unisci alla commessa", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit">Unisci</button></form>
         </details>
-        <form method="post" action="/pratiche/{{ p.id }}/scarta" data-conferma="Scartare la pratica proposta?">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Scarta</button></form>
+        <form method="post" action="/pratiche/{{ p.id }}/scarta" data-conferma="Scartare la commessa proposta?">{{ csrf() }}<button class="tr-btn tr-btn--danger tr-btn--sm" type="submit">Scarta</button></form>
         <form method="post" action="/pratiche/{{ p.id }}/conferma">{{ csrf() }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma</span></button></form>
       </div>
     </article>
     {% endfor %}
   </div>
   {{ paginazione(pagina) }}
-  {% else %}<div class="tr-panel"><p class="tr-card__empty">Nessuna pratica proposta</p></div>{% endif %}
+  {% else %}<div class="tr-panel"><p class="tr-card__empty">Nessuna commessa proposta</p></div>{% endif %}
 {% endif %}
 
 {% if scheda == 'messaggi' %}
@@ -91,7 +91,7 @@
       </div>
       <div class="pmo-scheda__body">
         <div class="pmo-scheda__stati">
-          {% if m.pratica and m.pratica.stato_verifica == 'proposto' %}{{ da_confermare("Pratica proposta") }}{% endif %}
+          {% if m.pratica and m.pratica.stato_verifica == 'proposto' %}{{ da_confermare("Commessa proposta") }}{% endif %}
           {% if m.confidenza is not none %}<span class="pmo-meta">Confidenza {{ '%.0f' % (m.confidenza * 100) }}%</span>{% endif %}
           <a class="tr-btn tr-btn--quiet tr-btn--sm" href="{{ m.gmail_url }}" target="_blank" rel="noopener"><span>Apri in Gmail</span><span class="tr-icon tr-icon--external-link" aria-hidden="true"></span></a>
         </div>
@@ -107,7 +107,7 @@
       <div class="tr-card__foot">
         <form method="post" action="/messaggi/{{ m.id }}/riclassifica">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=messaggi"><button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit">Riclassifica</button></form>
         <form method="post" action="/messaggi/{{ m.id }}/ignora">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=messaggi"><button class="tr-btn tr-btn--neutral tr-btn--sm" type="submit">Ignora</button></form>
-        <form method="post" action="/messaggi/{{ m.id }}/collega" class="pmo-inline">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=messaggi">{{ campo("codice", "Collega alla pratica", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Collega</button></form>
+        <form method="post" action="/messaggi/{{ m.id }}/collega" class="pmo-inline">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=messaggi">{{ campo("codice", "Collega alla commessa", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Collega</button></form>
         {% if m.pratica %}<form method="post" action="/messaggi/{{ m.id }}/conferma">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=messaggi"><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma {{ m.pratica.codice }}</span></button></form>{% endif %}
       </div>
     </article>
@@ -133,12 +133,12 @@
         {% if d.motivo %}<p class="tr-card__sub">{{ d.motivo }}</p>{% endif %}
         <div class="tr-datatable">
           <div class="tr-datatable__row"><span class="tr-datatable__label">Modificato</span><span class="tr-datatable__value">{{ d.modified_time | data }}</span></div>
-          <div class="tr-datatable__row"><span class="tr-datatable__label">Pratica proposta</span>{% if d.pratica %}<a class="tr-datatable__value" href="/pratiche/{{ d.pratica.id }}">{{ d.pratica.codice }}</a>{% else %}<span class="tr-datatable__value">-</span>{% endif %}</div>
+          <div class="tr-datatable__row"><span class="tr-datatable__label">Commessa proposta</span>{% if d.pratica %}<a class="tr-datatable__value" href="/pratiche/{{ d.pratica.id }}">{{ d.pratica.codice }}</a>{% else %}<span class="tr-datatable__value">-</span>{% endif %}</div>
         </div>
       </div>
       <div class="tr-card__foot">
         <form method="post" action="/documenti/{{ d.id }}/ignora">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=documenti"><button class="tr-btn tr-btn--neutral tr-btn--sm" type="submit">Ignora</button></form>
-        <form method="post" action="/documenti/{{ d.id }}/collega" class="pmo-inline">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=documenti">{{ campo("codice", "Collega alla pratica", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Collega</button></form>
+        <form method="post" action="/documenti/{{ d.id }}/collega" class="pmo-inline">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=documenti">{{ campo("codice", "Collega alla commessa", compatto=true, segnaposto="PMO-AAAA-NNNN", attr='list="pratiche-aperte"') }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Collega</button></form>
         {% if d.pratica %}<form method="post" action="/documenti/{{ d.id }}/conferma">{{ csrf() }}<input type="hidden" name="ritorno" value="/revisione?scheda=documenti"><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma</span></button></form>{% endif %}
       </div>
     </article>

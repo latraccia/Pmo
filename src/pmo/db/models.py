@@ -7,6 +7,8 @@ Entità principali:
 - Evento: cronologia della pratica (ogni evento punta alla fonte: mail, documento, utente, sistema).
 - Messaggio / Documento: elementi importati da Gmail e Drive, classificati e collegati alle pratiche.
 - Sollecito: segnalazione generata dalle regole (ordine senza specifiche, scadenze, ecc.).
+- Offerta (con revisioni e righe) e Ordine (con righe): il contenuto economico della commessa, riga per riga;
+  le allocazioni legano le righe d'ordine alle righe dell'offerta e ne ricavano il residuo.
 """
 
 from __future__ import annotations
@@ -371,6 +373,34 @@ class Prodotto(Base):
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
 
     pratiche: Mapped[list[Pratica]] = relationship(back_populates="prodotto")
+    articoli: Mapped[list[Articolo]] = relationship(back_populates="prodotto", order_by="Articolo.codice")
+
+
+class Articolo(Base):
+    """Voce del listino di vendita: un codice con la sua descrizione, il prezzo di listino e l'IVA.
+
+    Le righe di offerte e ordini possono partire da un articolo: codice, descrizione, prezzo e IVA vengono copiati
+    nella riga (che resta modificabile e non cambia se poi cambia il listino). Le righe libere restano possibili.
+    """
+
+    __tablename__ = "articoli"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    codice: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    descrizione: Mapped[str] = mapped_column(Text, default="")
+    prodotto_id: Mapped[int | None] = mapped_column(ForeignKey("prodotti.id", ondelete="SET NULL"), index=True)
+    unita: Mapped[str] = mapped_column(String(20), default="")
+    prezzo_listino: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    aliquota_iva: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    note: Mapped[str] = mapped_column(Text, default="")
+    attivo: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+    prodotto: Mapped[Prodotto | None] = relationship(back_populates="articoli")
+
+    @property
+    def etichetta(self) -> str:
+        return f"{self.codice} · {self.descrizione}" if self.descrizione else self.codice
 
 
 # ---------------------------------------------------------------------------------------------
@@ -423,6 +453,8 @@ class Pratica(Base):
     messaggi: Mapped[list[Messaggio]] = relationship(back_populates="pratica")
     documenti: Mapped[list[Documento]] = relationship(back_populates="pratica")
     solleciti: Mapped[list[Sollecito]] = relationship(back_populates="pratica", cascade="all, delete-orphan")
+    offerte: Mapped[list[Offerta]] = relationship(back_populates="pratica", cascade="all, delete-orphan", order_by="Offerta.id")
+    ordini: Mapped[list[Ordine]] = relationship(back_populates="pratica", cascade="all, delete-orphan", order_by="Ordine.id")
 
     @property
     def etichetta_stato(self) -> str:
@@ -550,6 +582,278 @@ class Documento(Base):
 
     account: Mapped[Account] = relationship()
     pratica: Mapped[Pratica | None] = relationship(back_populates="documenti")
+
+
+# ---------------------------------------------------------------------------------------------
+# Offerte, ordini e righe
+# ---------------------------------------------------------------------------------------------
+
+
+class StatoRevisione(enum.StrEnum):
+    BOZZA = "bozza"
+    INVIATA = "inviata"
+    ACCETTATA = "accettata"
+    RIFIUTATA = "rifiutata"
+    SUPERATA = "superata"
+
+
+class Conformita(enum.StrEnum):
+    DA_VERIFICARE = "da_verificare"
+    CONFORME = "conforme"
+    SCOSTAMENTI = "scostamenti"
+    NON_DETERMINABILE = "non_determinabile"
+
+
+class Avanzamento(enum.StrEnum):
+    APERTO = "aperto"
+    IN_LAVORAZIONE = "in_lavorazione"
+    CONSEGNATO = "consegnato"
+    CHIUSO = "chiuso"
+    ANNULLATO = "annullato"
+
+
+class Attesa(enum.StrEnum):
+    NESSUNA = "nessuna"
+    CLIENTE = "cliente"  # il cliente aspetta noi
+    NOI = "noi"  # noi aspettiamo il cliente
+
+
+ETICHETTE_REVISIONE = {"bozza": "Bozza", "inviata": "Inviata", "accettata": "Accettata", "rifiutata": "Rifiutata", "superata": "Superata"}
+ETICHETTE_CONFORMITA = {
+    "da_verificare": "Da verificare",
+    "conforme": "Conforme",
+    "scostamenti": "Scostamenti",
+    "non_determinabile": "Non determinabile",
+}
+ETICHETTE_AVANZAMENTO = {
+    "aperto": "Aperto",
+    "in_lavorazione": "In lavorazione",
+    "consegnato": "Consegnato",
+    "chiuso": "Chiuso",
+    "annullato": "Annullato",
+}
+ETICHETTE_ATTESA = {"nessuna": "Nessuna", "cliente": "Il cliente aspetta noi", "noi": "Aspettiamo il cliente"}
+
+CENTESIMO = Decimal("0.01")
+
+
+class _CampiRiga:
+    """Campi comuni alle righe d'offerta e d'ordine. L'importo è il netto: quantità × prezzo − sconto, senza IVA."""
+
+    posizione: Mapped[int] = mapped_column(Integer, default=0)
+    articolo_id: Mapped[int | None] = mapped_column(ForeignKey("articoli.id", ondelete="SET NULL"))
+    prodotto_id: Mapped[int | None] = mapped_column(ForeignKey("prodotti.id", ondelete="SET NULL"))
+    modulo: Mapped[str] = mapped_column(String(120), default="")
+    descrizione: Mapped[str] = mapped_column(Text, default="")
+    quantita: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    prezzo_unitario: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    sconto_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    aliquota_iva: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    stato_verifica: Mapped[str] = mapped_column(String(16), default=StatoVerifica.CONFERMATO)
+
+    @property
+    def importo(self) -> Decimal | None:
+        if self.quantita is None or self.prezzo_unitario is None:
+            return None
+        lordo = Decimal(self.quantita) * Decimal(self.prezzo_unitario)
+        sconto = Decimal(self.sconto_pct or 0)
+        return (lordo * (Decimal(100) - sconto) / Decimal(100)).quantize(CENTESIMO)
+
+    @property
+    def prezzo_netto(self) -> Decimal | None:
+        if self.prezzo_unitario is None:
+            return None
+        return (Decimal(self.prezzo_unitario) * (Decimal(100) - Decimal(self.sconto_pct or 0)) / Decimal(100)).quantize(CENTESIMO)
+
+
+def totale_righe(righe) -> Decimal:  # noqa: ANN001
+    """Somma degli importi delle righe (quelle senza quantità o prezzo non contano)."""
+    return sum((r.importo for r in righe if r.importo is not None), Decimal("0.00"))
+
+
+class Offerta(Base):
+    __tablename__ = "offerte"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pratica_id: Mapped[int] = mapped_column(ForeignKey("pratiche.id", ondelete="CASCADE"), index=True)
+    # Il cliente a cui si offre: obbligatorio (lo impone il servizio), di norma quello della commessa.
+    cliente_id: Mapped[int | None] = mapped_column(ForeignKey("clienti.id"), index=True)
+    numero: Mapped[str] = mapped_column(String(80), default="")
+    titolo: Mapped[str] = mapped_column(String(300), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+    pratica: Mapped[Pratica] = relationship(back_populates="offerte")
+    cliente: Mapped[Cliente | None] = relationship()
+    revisioni: Mapped[list[RevisioneOfferta]] = relationship(
+        back_populates="offerta", cascade="all, delete-orphan", order_by="RevisioneOfferta.numero_revisione"
+    )
+
+    @property
+    def revisione_accettata(self) -> RevisioneOfferta | None:
+        return next((r for r in self.revisioni if r.stato == StatoRevisione.ACCETTATA), None)
+
+    @property
+    def ultima_revisione(self) -> RevisioneOfferta | None:
+        return self.revisioni[-1] if self.revisioni else None
+
+    @property
+    def nome(self) -> str:
+        return self.numero or self.titolo or f"Offerta {self.id}"
+
+
+class RevisioneOfferta(Base):
+    __tablename__ = "revisioni_offerta"
+    __table_args__ = (UniqueConstraint("offerta_id", "numero_revisione"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    offerta_id: Mapped[int] = mapped_column(ForeignKey("offerte.id", ondelete="CASCADE"), index=True)
+    numero_revisione: Mapped[int] = mapped_column(Integer, default=1)
+    data: Mapped[date | None] = mapped_column(Date)
+    stato: Mapped[str] = mapped_column(String(16), default=StatoRevisione.BOZZA)
+    condizioni: Mapped[str] = mapped_column(Text, default="")
+    messaggio_id: Mapped[int | None] = mapped_column(ForeignKey("messaggi.id", ondelete="SET NULL"))
+    documento_id: Mapped[int | None] = mapped_column(ForeignKey("documenti.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+
+    offerta: Mapped[Offerta] = relationship(back_populates="revisioni")
+    righe: Mapped[list[RigaOfferta]] = relationship(
+        back_populates="revisione", cascade="all, delete-orphan", order_by="[RigaOfferta.posizione, RigaOfferta.id]"
+    )
+
+    @property
+    def totale(self) -> Decimal:
+        return totale_righe(self.righe)
+
+    @property
+    def etichetta_stato(self) -> str:
+        return ETICHETTE_REVISIONE.get(self.stato, self.stato)
+
+    @property
+    def nome(self) -> str:
+        return f"{self.offerta.nome} rev. {self.numero_revisione}"
+
+
+class RigaOfferta(_CampiRiga, Base):
+    __tablename__ = "righe_offerta"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    revisione_id: Mapped[int] = mapped_column(ForeignKey("revisioni_offerta.id", ondelete="CASCADE"), index=True)
+
+    revisione: Mapped[RevisioneOfferta] = relationship(back_populates="righe")
+    prodotto: Mapped[Prodotto | None] = relationship()
+    articolo: Mapped[Articolo | None] = relationship()
+    allocazioni: Mapped[list[AllocazioneRiga]] = relationship(back_populates="riga_offerta", cascade="all, delete-orphan")
+
+
+ordini_messaggi = Table(
+    "ordini_messaggi",
+    Base.metadata,
+    Column("ordine_id", ForeignKey("ordini.id", ondelete="CASCADE"), primary_key=True),
+    Column("messaggio_id", ForeignKey("messaggi.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Ordine(Base):
+    __tablename__ = "ordini"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pratica_id: Mapped[int] = mapped_column(ForeignKey("pratiche.id", ondelete="CASCADE"), index=True)
+    numero: Mapped[str] = mapped_column(String(80), default="")  # il numero d'ordine del cliente
+    data_ordine: Mapped[date | None] = mapped_column(Date)
+    revisione_offerta_id: Mapped[int | None] = mapped_column(ForeignKey("revisioni_offerta.id", ondelete="SET NULL"))
+    riferimento_offerta: Mapped[str] = mapped_column(String(80), default="")  # il numero d'offerta citato nell'ordine
+    condizioni: Mapped[str] = mapped_column(Text, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    stato_verifica: Mapped[str] = mapped_column(String(16), default=StatoVerifica.CONFERMATO, index=True)
+    conformita: Mapped[str] = mapped_column(String(20), default=Conformita.DA_VERIFICARE, index=True)
+    parziale: Mapped[bool] = mapped_column(Boolean, default=False)
+    esito_verifica: Mapped[dict] = mapped_column(JSONType, default=dict)
+    verificato_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    deroga_motivo: Mapped[str] = mapped_column(Text, default="")
+    deroga_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    deroga_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    avanzamento: Mapped[str] = mapped_column(String(20), default=Avanzamento.APERTO, index=True)
+    attesa: Mapped[str] = mapped_column(String(10), default=Attesa.NESSUNA, index=True)
+    attesa_motivo: Mapped[str] = mapped_column(String(500), default="")
+    attesa_dal: Mapped[date | None] = mapped_column(Date)
+    chiave: Mapped[str | None] = mapped_column(String(300), unique=True)  # idempotenza per gli ordini nati dagli eventi
+    messaggio_id: Mapped[int | None] = mapped_column(ForeignKey("messaggi.id", ondelete="SET NULL"))
+    documento_id: Mapped[int | None] = mapped_column(ForeignKey("documenti.id", ondelete="SET NULL"))
+    evento_id: Mapped[int | None] = mapped_column(ForeignKey("eventi.id", ondelete="SET NULL"))
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    pratica: Mapped[Pratica] = relationship(back_populates="ordini")
+    revisione_offerta: Mapped[RevisioneOfferta | None] = relationship()
+    righe: Mapped[list[RigaOrdine]] = relationship(
+        back_populates="ordine", cascade="all, delete-orphan", order_by="[RigaOrdine.posizione, RigaOrdine.id]"
+    )
+    messaggi: Mapped[list[Messaggio]] = relationship(secondary=ordini_messaggi, order_by="Messaggio.data")
+    deroga_utente: Mapped[User | None] = relationship(foreign_keys=[deroga_user_id])
+
+    @property
+    def totale(self) -> Decimal:
+        return totale_righe(self.righe)
+
+    @property
+    def nome(self) -> str:
+        return f"Ordine {self.numero}" if self.numero else f"Ordine del {self.data_ordine:%d/%m/%Y}" if self.data_ordine else f"Ordine {self.id}"
+
+    @property
+    def derogato(self) -> bool:
+        return self.conformita == Conformita.SCOSTAMENTI and self.deroga_at is not None
+
+    @property
+    def etichetta_conformita(self) -> str:
+        if self.derogato:
+            return "Conforme con deroga"
+        etichetta = ETICHETTE_CONFORMITA.get(self.conformita, self.conformita)
+        return f"{etichetta}, parziale" if self.parziale and self.conformita == Conformita.CONFORME else etichetta
+
+    @property
+    def etichetta_avanzamento(self) -> str:
+        return ETICHETTE_AVANZAMENTO.get(self.avanzamento, self.avanzamento)
+
+    @property
+    def etichetta_attesa(self) -> str:
+        return ETICHETTE_ATTESA.get(self.attesa, self.attesa)
+
+    @property
+    def conta(self) -> bool:
+        """Entra nei totali della commessa: confermato e non annullato."""
+        return self.stato_verifica == StatoVerifica.CONFERMATO and self.avanzamento != Avanzamento.ANNULLATO
+
+
+class RigaOrdine(_CampiRiga, Base):
+    __tablename__ = "righe_ordine"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ordine_id: Mapped[int] = mapped_column(ForeignKey("ordini.id", ondelete="CASCADE"), index=True)
+
+    ordine: Mapped[Ordine] = relationship(back_populates="righe")
+    prodotto: Mapped[Prodotto | None] = relationship()
+    articolo: Mapped[Articolo | None] = relationship()
+    allocazioni: Mapped[list[AllocazioneRiga]] = relationship(back_populates="riga_ordine", cascade="all, delete-orphan")
+
+
+class AllocazioneRiga(Base):
+    """Quanto di una riga d'offerta copre una riga d'ordine. Il residuo della riga d'offerta è ciò che non è allocato."""
+
+    __tablename__ = "allocazioni_righe"
+    __table_args__ = (UniqueConstraint("riga_offerta_id", "riga_ordine_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    riga_offerta_id: Mapped[int] = mapped_column(ForeignKey("righe_offerta.id", ondelete="CASCADE"), index=True)
+    riga_ordine_id: Mapped[int] = mapped_column(ForeignKey("righe_ordine.id", ondelete="CASCADE"), index=True)
+    quantita: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    importo: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    origine: Mapped[str] = mapped_column(String(12), default="automatica")  # automatica | manuale
+
+    riga_offerta: Mapped[RigaOfferta] = relationship(back_populates="allocazioni")
+    riga_ordine: Mapped[RigaOrdine] = relationship(back_populates="allocazioni")
 
 
 # ---------------------------------------------------------------------------------------------

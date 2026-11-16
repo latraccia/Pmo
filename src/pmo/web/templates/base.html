@@ -26,8 +26,8 @@
 </svg>
 {% block corpo %}
 {% set percorso = request.url.path %}
-{% set voci = [("/", "Cruscotto", none), ("/pratiche", "Pratiche", none), ("/clienti", "Clienti", none), ("/solleciti", "Solleciti", "solleciti"), ("/revisione", "Revisione", "revisione"), ("/caselle", "Caselle", none)] %}
-{% if utente and (puo(utente, 'configurare') or puo(utente, 'gestire_utenti')) %}{% set voci = voci + [("/impostazioni", "Impostazioni", none)] %}{% endif %}
+{% set voci = [("/", "Cruscotto", none), ("/pratiche", "Commesse", none), ("/offerte", "Offerte", none), ("/ordini", "Ordini", none), ("/clienti", "Clienti", none), ("/solleciti", "Solleciti", "solleciti"), ("/revisione", "Revisione", "revisione"), ("/caselle", "Caselle", none)] %}
+{% if utente and (puo(utente, 'configurare') or puo(utente, 'gestire_utenti') or puo(utente, 'gestire_ordini')) %}{% set voci = voci + [("/impostazioni", "Impostazioni", none)] %}{% endif %}
 <div class="pmo-app">
   {#- Il menu laterale: marchio e prodotto in testa, le voci, l'utente in fondo. -#}
   <aside class="pmo-side">

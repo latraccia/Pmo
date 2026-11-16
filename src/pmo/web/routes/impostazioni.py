@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from pmo.db.models import (
     STATI_TERMINALI,
     Account,
+    Articolo,
     Cliente,
     Pratica,
     Prodotto,
@@ -31,12 +32,14 @@ SCHEDE: dict[str, Azione] = {
     "regole": Azione.CONFIGURARE,
     "filtri": Azione.CONFIGURARE,
     "prodotti": Azione.CONFIGURARE,
+    "listino": Azione.GESTIRE_ORDINI,
     "utenti": Azione.GESTIRE_UTENTI,
     "team": Azione.GESTIRE_UTENTI,
     "claude": Azione.CONFIGURARE,
 }
 configurazione = richiede(Azione.CONFIGURARE)
 gestione_utenti = richiede(Azione.GESTIRE_UTENTI)
+gestione_listino = richiede(Azione.GESTIRE_ORDINI)
 
 
 def _righe(testo: str) -> list[str]:
@@ -65,6 +68,9 @@ def pagina(request: Request, scheda: str = "", session: Session = Depends(get_db
         regole=regole,
         filtri=get_impostazione(session, "filtri"),
         prodotti=session.scalars(select(Prodotto).order_by(Prodotto.nome)).all(),
+        articoli=session.scalars(select(Articolo).options(selectinload(Articolo.prodotto)).order_by(Articolo.codice)).all()
+        if scheda == "listino"
+        else [],
         utenti=session.scalars(select(User).options(selectinload(User.teams)).order_by(User.email)).all(),
         teams=session.scalars(select(Team).options(selectinload(Team.membri)).order_by(Team.nome)).all(),
         conteggi_team=_conteggi_team(session, utente) if scheda == "team" else {},
@@ -122,6 +128,48 @@ def prodotto(request: Request, prodotto_id: str = Form(""), nome: str = Form(...
     p.attivo = bool(attivo)
     flash(request, f"Prodotto '{p.nome}' salvato.")
     return redirect("/impostazioni?scheda=prodotti")
+
+
+@router.post("/impostazioni/listino", dependencies=[Depends(verifica_csrf)])
+def articolo_salva(
+    request: Request,
+    articolo_id: str = Form(""),
+    codice: str = Form(...),
+    descrizione: str = Form(""),
+    prodotto_id: str = Form(""),
+    unita: str = Form(""),
+    prezzo_listino: str = Form(""),
+    aliquota_iva: str = Form(""),
+    attivo: str = Form(""),
+    nuovo: str = Form(""),
+    session: Session = Depends(get_db, scope="function"),
+    utente: User = Depends(gestione_listino),
+):
+    """Un articolo del listino di vendita: codice univoco, descrizione, prodotto, unità, prezzo e IVA."""
+    from pmo.web.routes.pratiche import _decimal, _intero_o
+
+    codice = codice.strip()[:60]
+    if not codice:
+        raise HTTPException(status_code=400, detail="Il codice è obbligatorio")
+    articolo = session.get(Articolo, int(articolo_id)) if articolo_id.strip().isdigit() else None
+    if articolo is None:
+        articolo = Articolo()
+        session.add(articolo)
+    articolo.codice = codice
+    articolo.descrizione = descrizione.strip()
+    articolo.prodotto_id = _intero_o(prodotto_id, None)
+    articolo.unita = unita.strip()[:20]
+    articolo.prezzo_listino = _decimal(prezzo_listino)
+    articolo.aliquota_iva = _decimal(aliquota_iva)
+    articolo.attivo = bool(attivo) or bool(nuovo)
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        flash(request, f"Esiste già un articolo con il codice '{codice}'.", "errore")
+        return redirect("/impostazioni?scheda=listino")
+    flash(request, f"Articolo {articolo.codice} salvato.")
+    return redirect("/impostazioni?scheda=listino")
 
 
 @router.post("/impostazioni/utenti", dependencies=[Depends(verifica_csrf)])

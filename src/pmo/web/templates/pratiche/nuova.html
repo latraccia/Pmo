@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% from "_ds.html" import eyebrow, campo, area, selezione, csrf with context %}
-{% block titolo %}Nuova pratica · {{ app_name }}{% endblock %}
+{% block titolo %}Nuova commessa · {{ app_name }}{% endblock %}
 {% block contenuto %}
 {#- La testata della pagina sta sul suo piano bianco, come ogni blocco di contenuto. -#}
 <div class="tr-panel">
   <div class="pmo-testata">
-    {{ eyebrow("Pratiche") }}
-    <h1 class="tr-h3 tr-intro__title">Nuova <em>pratica</em></h1>
-    <p class="tr-intro__lead">Una pratica nasce di solito dalla posta, proposta dall'IA. Qui la si apre a mano: riceve subito il suo codice, da usare nell'oggetto delle mail.</p>
+    {{ eyebrow("Commesse") }}
+    <h1 class="tr-h3 tr-intro__title">Nuova <em>commessa</em></h1>
+    <p class="tr-intro__lead">Una commessa nasce di solito dalla posta, proposta dall'IA. Qui la si apre a mano: riceve subito il suo codice, da usare nell'oggetto delle mail.</p>
   </div>
 </div>
 
@@ -28,7 +28,7 @@
       {% call selezione("stato", "Fase iniziale") %}
         {% for k, v in stati.items() if k not in ['chiusa', 'annullata'] %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
       {% endcall %}
-      {% call selezione("team_id", "Team", aiuto="Chi fa parte del team vede la pratica") %}
+      {% call selezione("team_id", "Team", aiuto="Chi fa parte del team vede la commessa") %}
         <option value="">Da assegnare</option>
         {% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if team_proposto == t.id }}>{{ t.nome }}</option>{% endfor %}
       {% endcall %}
@@ -50,7 +50,7 @@
   </div>
   <div class="tr-card__foot">
     <a class="tr-btn tr-btn--neutral" href="/pratiche">Annulla</a>
-    <button class="tr-btn tr-btn--primary" type="submit">Crea pratica</button>
+    <button class="tr-btn tr-btn--primary" type="submit">Crea commessa</button>
   </div>
 </form>
 {% endblock %}

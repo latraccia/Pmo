@@ -66,8 +66,10 @@ LIMITE_MASSIMO = 100
 SOLA_LETTURA = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 TIPI_NOTA = ("nota", "promemoria", "riunione", "richiesta_informazioni", "altro")
 
-ISTRUZIONI = """PANificator 360: pratiche della Cooperativa EDP La Traccia (stima, offerta, ordine, specifiche, sviluppo, \
-consegna, fatturazione) ricostruite da Gmail e Google Drive. Ogni pratica ha un codice PMO-AAAA-NNNN.
+ISTRUZIONI = """PANificator 360: commesse della Cooperativa EDP La Traccia (stima, offerta, ordine, specifiche, sviluppo, \
+consegna, fatturazione) ricostruite da Gmail e Google Drive. Ogni commessa ha un codice PMO-AAAA-NNNN; negli strumenti e \
+nei loro parametri la commessa si chiama ancora "pratica". Una commessa può avere offerte (con revisioni e righe) e ordini \
+a righe verificati contro l'offerta: `dettaglio_pratica` li riporta con conformità, residuo e attese.
 
 - `stato_sistema`: colpo d'occhio su pratiche, solleciti, elementi da verificare e caselle.
 - `elenca_pratiche` e `dettaglio_pratica`: elenco filtrabile e cronologia di una pratica con i link alle fonti.
@@ -415,6 +417,41 @@ def crea_server(
                     for e in eventi
                 ],
                 "solleciti_aperti_dettaglio": [_sollecito_dict(s) for s in solleciti],
+                "offerte": [
+                    {
+                        "numero": o.numero,
+                        "titolo": o.titolo,
+                        "revisioni": [
+                            {"revisione": r.numero_revisione, "stato": r.stato, "data": _data(r.data), "totale": _importo(r.totale)}
+                            for r in o.revisioni
+                        ],
+                    }
+                    for o in pratica.offerte
+                ],
+                "ordini": [
+                    {
+                        "numero": o.numero,
+                        "data": _data(o.data_ordine),
+                        "totale": _importo(o.totale),
+                        "verifica": o.stato_verifica,
+                        "conformita": o.etichetta_conformita,
+                        "scostamenti": [s["messaggio"] for s in (o.esito_verifica or {}).get("scostamenti", [])],
+                        "residuo_offerta": (o.esito_verifica or {}).get("residuo"),
+                        "avanzamento": o.avanzamento,
+                        "attesa": o.etichetta_attesa if o.attesa != "nessuna" else None,
+                        "attesa_motivo": o.attesa_motivo or None,
+                        "righe": [
+                            {
+                                "modulo": r.modulo,
+                                "descrizione": _testo(r.descrizione, 200),
+                                "quantita": _importo(r.quantita),
+                                "importo": _importo(r.importo),
+                            }
+                            for r in o.righe
+                        ],
+                    }
+                    for o in pratica.ordini
+                ],
                 "messaggi": [_messaggio_dict(m) for m in messaggi],
                 "documenti": [_documento_dict(d) for d in documenti],
                 "totali": {

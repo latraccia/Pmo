@@ -13,7 +13,17 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from pmo.config import get_settings
 from pmo.web.deps import STATIC_DIR, NonAutenticato
-from pmo.web.routes import auth, caselle, clienti, dashboard, impostazioni, pratiche, revisione, solleciti
+from pmo.web.routes import (
+    auth,
+    caselle,
+    clienti,
+    dashboard,
+    impostazioni,
+    ordini,
+    pratiche,
+    revisione,
+    solleciti,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +64,7 @@ def create_app() -> FastAPI:
             destinazione += "?" + request.url.query
         return RedirectResponse(f"/login?next={quote(destinazione)}", status_code=303)
 
-    for router in (auth.router, dashboard.router, pratiche.router, clienti.router, solleciti.router, revisione.router, caselle.router, impostazioni.router):
+    for router in (auth.router, dashboard.router, pratiche.router, ordini.router, clienti.router, solleciti.router, revisione.router, caselle.router, impostazioni.router):
         app.include_router(router)
 
     @app.get("/healthz", include_in_schema=False)

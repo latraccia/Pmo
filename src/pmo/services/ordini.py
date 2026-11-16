@@ -1,0 +1,405 @@
+"""Offerte, ordini e righe della commessa.
+
+La commessa (nel codice ancora `Pratica`) ha offerte con revisioni e ordini; offerte e ordini sono fatti di righe.
+Gli importi della commessa che prima si scrivevano a mano si ricavano dalle righe appena ci sono:
+- `importo_ordine` = somma degli ordini confermati e non annullati;
+- `importo_offerta` = totale delle revisioni accettate.
+Un evento "ordine ricevuto" confermato (dall'IA o a mano) crea un ordine con una riga "Da dettagliare", una volta sola:
+rileggere lo stesso ordine aggiorna quello che c'è già.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from pmo.db.models import (
+    Articolo,
+    Cliente,
+    Evento,
+    Messaggio,
+    Offerta,
+    Ordine,
+    Pratica,
+    RevisioneOfferta,
+    RigaOfferta,
+    RigaOrdine,
+    StatoRevisione,
+    StatoVerifica,
+)
+
+DA_DETTAGLIARE = "Da dettagliare"
+CAMPI_RIGA = ("posizione", "articolo_id", "prodotto_id", "modulo", "descrizione", "quantita", "prezzo_unitario", "sconto_pct", "aliquota_iva")
+
+
+def normalizza(testo: str | None) -> str:
+    """Per confrontare moduli, descrizioni e condizioni: minuscole, solo lettere e cifre, spazi singoli."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (testo or "").lower())).strip()
+
+
+def normalizza_numero(numero: str | None) -> str:
+    """Per confrontare numeri d'ordine e d'offerta: solo lettere e cifre, minuscole. «4500 123456», «4500-123456» e
+    «4500123456» sono lo stesso numero."""
+    return re.sub(r"[\W_]+", "", (numero or "").lower())
+
+
+# --- offerte ---------------------------------------------------------------------------------------
+
+
+def crea_offerta(
+    session: Session,
+    pratica: Pratica,
+    *,
+    cliente_id: int | None = None,
+    numero: str = "",
+    titolo: str = "",
+    data: date | None = None,
+    condizioni: str = "",
+    note: str = "",
+    user_id: int | None = None,
+) -> Offerta:
+    """Una nuova offerta con la sua prima revisione, in bozza e senza righe. Il cliente è obbligatorio: se non è
+    indicato vale quello della commessa; una commessa ancora senza cliente prende quello dell'offerta."""
+    cliente_id = cliente_obbligatorio(session, pratica, cliente_id)
+    offerta = Offerta(
+        pratica_id=pratica.id, cliente_id=cliente_id, numero=numero.strip()[:80], titolo=titolo.strip()[:300], note=note,
+        created_by_user_id=user_id,
+    )
+    offerta.revisioni.append(RevisioneOfferta(numero_revisione=1, data=data, condizioni=condizioni, stato=StatoRevisione.BOZZA))
+    session.add(offerta)
+    session.flush()
+    return offerta
+
+
+def cliente_obbligatorio(session: Session, pratica: Pratica, cliente_id: int | None) -> int:
+    """Il cliente di un'offerta: quello indicato o, in mancanza, quello della commessa. Senza nessuno dei due è un
+    errore. La commessa senza cliente prende quello dell'offerta."""
+    cliente_id = cliente_id or pratica.cliente_id
+    if cliente_id is None or session.get(Cliente, cliente_id) is None:
+        raise ValueError("Il cliente dell'offerta è obbligatorio.")
+    if pratica.cliente_id is None:
+        pratica.cliente_id = cliente_id
+    return cliente_id
+
+
+def nuova_revisione(session: Session, offerta: Offerta, *, data: date | None = None) -> RevisioneOfferta:
+    """La revisione successiva, con le righe e le condizioni dell'ultima copiate: si modifica quel che cambia."""
+    ultima = offerta.ultima_revisione
+    revisione = RevisioneOfferta(
+        numero_revisione=(ultima.numero_revisione + 1) if ultima else 1,
+        data=data or date.today(),
+        condizioni=ultima.condizioni if ultima else "",
+        stato=StatoRevisione.BOZZA,
+    )
+    if ultima is not None:
+        for riga in ultima.righe:
+            revisione.righe.append(RigaOfferta(**{c: getattr(riga, c) for c in CAMPI_RIGA}, stato_verifica=riga.stato_verifica))
+    offerta.revisioni.append(revisione)
+    session.flush()
+    return revisione
+
+
+def imposta_stato_revisione(session: Session, revisione: RevisioneOfferta, stato: str) -> None:
+    """Accettare una revisione rende "superata" quella accettata prima nella stessa offerta."""
+    stato = StatoRevisione(stato).value
+    era_accettata = revisione.stato == StatoRevisione.ACCETTATA
+    if stato == StatoRevisione.ACCETTATA:
+        for altra in revisione.offerta.revisioni:
+            if altra.id != revisione.id and altra.stato == StatoRevisione.ACCETTATA:
+                altra.stato = StatoRevisione.SUPERATA
+    revisione.stato = stato
+    session.flush()
+    ricalcola_importi_commessa(session, revisione.offerta.pratica, azzera_offerta=era_accettata)
+
+
+def revisioni_accettate(pratica: Pratica) -> list[RevisioneOfferta]:
+    return [r for o in pratica.offerte for r in o.revisioni if r.stato == StatoRevisione.ACCETTATA]
+
+
+# --- ordini ----------------------------------------------------------------------------------------
+
+
+def crea_ordine(
+    session: Session,
+    pratica: Pratica,
+    *,
+    numero: str = "",
+    data_ordine: date | None = None,
+    revisione_offerta_id: int | None = None,
+    riferimento_offerta: str = "",
+    condizioni: str = "",
+    note: str = "",
+    stato_verifica: str = StatoVerifica.CONFERMATO,
+    chiave: str | None = None,
+    user_id: int | None = None,
+    messaggio_id: int | None = None,
+    documento_id: int | None = None,
+    evento_id: int | None = None,
+) -> Ordine:
+    """Un ordine nuovo. Con un numero, la chiave è quella del numero nella commessa: lo stesso ordine che arriva poi
+    per mail viene riconosciuto. Due ordini con lo stesso numero nella stessa commessa non si creano."""
+    numero = numero.strip()[:80]
+    if numero:
+        doppio = ordine_con_numero(session, pratica.id, numero)
+        if doppio is not None:
+            raise ValueError(f"Nella commessa c'è già {doppio.nome}.")
+        chiave = chiave or chiave_ordine(pratica.id, numero)
+    ordine = Ordine(
+        pratica_id=pratica.id,
+        numero=numero,
+        data_ordine=data_ordine,
+        revisione_offerta_id=revisione_offerta_id,
+        riferimento_offerta=riferimento_offerta.strip()[:80],
+        condizioni=condizioni,
+        note=note,
+        stato_verifica=stato_verifica,
+        chiave=chiave,
+        created_by_user_id=user_id,
+        messaggio_id=messaggio_id,
+        documento_id=documento_id,
+        evento_id=evento_id,
+    )
+    session.add(ordine)
+    session.flush()
+    if messaggio_id:
+        messaggio = session.get(Messaggio, messaggio_id)
+        if messaggio is not None:
+            ordine.messaggi.append(messaggio)
+    return ordine
+
+
+def chiave_ordine(pratica_id: int, numero: str) -> str | None:
+    numero = normalizza_numero(numero)
+    return f"pratica:{pratica_id}:ordine:{numero}"[:300] if numero else None
+
+
+def ordine_con_numero(session: Session, pratica_id: int, numero: str, *, escludi_id: int | None = None) -> Ordine | None:
+    """L'ordine della commessa con lo stesso numero (senza badare a maiuscole, spazi e punteggiatura). Vale anche per
+    gli ordini scritti a mano o nati dalla migrazione, che possono non avere la chiave."""
+    cercato = normalizza_numero(numero)
+    if not cercato:
+        return None
+    candidati = session.scalars(select(Ordine).where(Ordine.pratica_id == pratica_id, Ordine.numero != "")).all()
+    return next((o for o in candidati if o.id != escludi_id and normalizza_numero(o.numero) == cercato), None)
+
+
+def rinumera_ordine(session: Session, ordine: Ordine, numero: str) -> None:
+    """Cambia il numero d'ordine, e con lui la chiave. Un numero già usato da un altro ordine della commessa è un
+    errore chiaro, non un vincolo violato al salvataggio."""
+    numero = numero.strip()[:80]
+    if numero == ordine.numero:
+        return
+    doppio = ordine_con_numero(session, ordine.pratica_id, numero, escludi_id=ordine.id)
+    if doppio is not None:
+        raise ValueError(f"Nella commessa c'è già {doppio.nome}: scegli un altro numero.")
+    ordine.numero = numero
+    nuova = chiave_ordine(ordine.pratica_id, numero)
+    if nuova is not None:
+        ordine.chiave = nuova
+    elif ordine.chiave and ordine.chiave.startswith("pratica:"):
+        ordine.chiave = f"evento:{ordine.evento_id}" if ordine.evento_id else None
+    session.flush()
+
+
+def ordine_da_evento(session: Session, pratica: Pratica, evento: Evento) -> Ordine:
+    """L'ordine che corrisponde a un evento "ordine ricevuto" confermato: lo crea o aggiorna quello già creato.
+
+    Lo stesso ordine letto due volte (la stessa mail, un inoltro, il PDF su Drive) si riconosce dall'evento o dal
+    numero d'ordine; l'importo dell'evento aggiorna la riga "Da dettagliare" solo finché nessuno ha scritto le righe.
+    """
+    riferimenti = (evento.dati or {}).get("riferimenti") or {}
+    numero = str(riferimenti.get("numero_ordine") or "").strip()
+    chiave = chiave_ordine(pratica.id, numero) or f"evento:{evento.id}"
+    ordine = (
+        session.scalar(select(Ordine).where(Ordine.evento_id == evento.id))
+        or session.scalar(select(Ordine).where(Ordine.chiave == chiave))
+        or ordine_con_numero(session, pratica.id, numero)
+    )
+    importo = evento.importo
+    if ordine is None:
+        # Il primo ordine di una commessa che aveva già un importo d'ordine scritto a mano lo eredita, se l'evento
+        # non ne porta uno: altrimenti l'importo della commessa, che ora è la somma degli ordini, andrebbe a zero.
+        if importo is None and pratica.importo_ordine is not None and not pratica.ordini:
+            importo = pratica.importo_ordine
+        ordine = crea_ordine(
+            session,
+            pratica,
+            numero=numero,
+            data_ordine=evento.data_evento.date() if evento.data_evento else date.today(),
+            riferimento_offerta=str(riferimenti.get("numero_offerta") or ""),
+            chiave=chiave,
+            messaggio_id=evento.messaggio_id,
+            documento_id=evento.documento_id,
+            evento_id=evento.id,
+            note=f"Creato dall'evento \"{evento.titolo}\".",
+        )
+    elif evento.messaggio_id and all(m.id != evento.messaggio_id for m in ordine.messaggi):
+        messaggio = session.get(Messaggio, evento.messaggio_id)
+        if messaggio is not None:
+            ordine.messaggi.append(messaggio)
+    if importo is not None:
+        solo_da_dettagliare = len(ordine.righe) == 1 and ordine.righe[0].descrizione == DA_DETTAGLIARE
+        if not ordine.righe:
+            ordine.righe.append(RigaOrdine(posizione=1, descrizione=DA_DETTAGLIARE, quantita=Decimal(1), prezzo_unitario=importo))
+        elif solo_da_dettagliare:
+            ordine.righe[0].prezzo_unitario = importo
+    session.flush()
+    ricalcola_importi_commessa(session, pratica)
+    return ordine
+
+
+def evento_rimosso(session: Session, evento: Evento) -> str | None:
+    """L'evento "ordine ricevuto" viene eliminato o scartato: l'ordine che aveva creato se ne va con lui, se nessuno
+    ci ha ancora lavorato (solo la riga "Da dettagliare"); altrimenti resta, staccato dall'evento. Restituisce una
+    frase per l'utente, oppure None se l'evento non aveva creato ordini."""
+    ordini = session.scalars(select(Ordine).where(Ordine.evento_id == evento.id)).all()
+    if not ordini:
+        return None
+    pratica = ordini[0].pratica
+    frasi = []
+    for ordine in ordini:
+        intatto = all(r.descrizione == DA_DETTAGLIARE and r.articolo_id is None for r in ordine.righe)
+        if intatto:
+            frasi.append(f"eliminato anche {ordine.nome}, creato da questo evento")
+            session.delete(ordine)
+        else:
+            ordine.evento_id = None
+            if ordine.chiave == f"evento:{evento.id}":
+                ordine.chiave = None
+            frasi.append(f"{ordine.nome} resta perché ha righe scritte a mano: eliminalo dalla sua pagina se non serve")
+    session.flush()
+    ricalcola_importi_commessa(session, pratica, azzera_ordine=True)
+    return "; ".join(frasi).capitalize() + "."
+
+
+def collega_messaggi(session: Session, ordine: Ordine, messaggio_ids: list[int]) -> None:
+    """Le mail dell'ordine, scelte tra quelle della commessa. Una mail può stare su più ordini."""
+    scelti = set(messaggio_ids)
+    validi = session.scalars(select(Messaggio).where(Messaggio.pratica_id == ordine.pratica_id, Messaggio.id.in_(scelti or [0]))).all()
+    ordine.messaggi = sorted(validi, key=lambda m: m.data)
+    session.flush()
+
+
+# --- righe -----------------------------------------------------------------------------------------
+
+
+def salva_riga(session: Session, contenitore: RevisioneOfferta | Ordine, riga_id: int | None, campi: dict[str, Any]):  # noqa: ANN201
+    """Crea o aggiorna una riga di una revisione d'offerta o di un ordine. Una riga scritta a mano è confermata."""
+    classe = RigaOfferta if isinstance(contenitore, RevisioneOfferta) else RigaOrdine
+    riga = None
+    if riga_id is not None:
+        riga = next((r for r in contenitore.righe if r.id == riga_id), None)
+        if riga is None:
+            raise ValueError("Riga non trovata")
+    if riga is None:
+        riga = classe()
+        contenitore.righe.append(riga)
+        if not campi.get("posizione"):
+            campi["posizione"] = max((r.posizione or 0 for r in contenitore.righe), default=0) + 1
+    vecchio_articolo_id = riga.articolo_id
+    for campo in CAMPI_RIGA:
+        if campo in campi and (campo != "posizione" or campi[campo]):
+            setattr(riga, campo, campi[campo])
+    if riga.articolo_id is not None:
+        _da_listino(session, riga, vecchio_articolo_id)
+    riga.stato_verifica = StatoVerifica.CONFERMATO
+    session.flush()
+    ricalcola_importi_commessa(session, _commessa(contenitore))
+    return riga
+
+
+def _da_listino(session: Session, riga: RigaOfferta | RigaOrdine, vecchio_articolo_id: int | None) -> None:
+    """Completa la riga con i dati dell'articolo del listino. Codice e descrizione sono sempre quelli dell'articolo
+    (non si modificano nella riga: per una descrizione diversa si usa una riga libera). Prezzo e IVA si riempiono se
+    vuoti o rimasti uguali all'articolo scelto prima: un prezzo trattato a mano resta."""
+    articolo = session.get(Articolo, riga.articolo_id)
+    if articolo is None:
+        riga.articolo_id = None
+        return
+    vecchio = session.get(Articolo, vecchio_articolo_id) if vecchio_articolo_id and vecchio_articolo_id != articolo.id else None
+
+    def da_aggiornare(valore, valore_vecchio) -> bool:  # noqa: ANN001
+        return valore in (None, "") or (vecchio is not None and valore == valore_vecchio)
+
+    riga.modulo = articolo.codice
+    riga.descrizione = articolo.descrizione
+    if da_aggiornare(riga.prezzo_unitario, vecchio.prezzo_listino if vecchio else None):
+        riga.prezzo_unitario = articolo.prezzo_listino
+    if da_aggiornare(riga.aliquota_iva, vecchio.aliquota_iva if vecchio else None):
+        riga.aliquota_iva = articolo.aliquota_iva
+    if riga.prodotto_id is None or (vecchio is not None and riga.prodotto_id == vecchio.prodotto_id):
+        riga.prodotto_id = articolo.prodotto_id
+
+
+def elimina_riga(session: Session, contenitore: RevisioneOfferta | Ordine, riga_id: int) -> None:
+    riga = next((r for r in contenitore.righe if r.id == riga_id), None)
+    if riga is None:
+        raise ValueError("Riga non trovata")
+    contenitore.righe.remove(riga)
+    session.flush()
+    ricalcola_importi_commessa(session, _commessa(contenitore))
+
+
+def _commessa(contenitore: RevisioneOfferta | Ordine) -> Pratica:
+    return contenitore.offerta.pratica if isinstance(contenitore, RevisioneOfferta) else contenitore.pratica
+
+
+# --- importi e residui -----------------------------------------------------------------------------
+
+
+def ricalcola_importi_commessa(
+    session: Session, pratica: Pratica, *, azzera_ordine: bool = False, azzera_offerta: bool = False
+) -> None:
+    """Con degli ordini l'importo ordinato è la loro somma; con revisioni accettate l'importo offerto è il loro totale.
+
+    Senza ordini (o senza revisioni accettate) l'importo scritto a mano resta, tranne quando è appena sparito ciò
+    da cui era calcolato (`azzera_*`: eliminato l'ultimo ordine, tolta l'ultima accettazione): allora si svuota,
+    invece di restare il totale di righe che non ci sono più."""
+    session.flush()
+    session.refresh(pratica, ["ordini", "offerte"])
+    if pratica.ordini:
+        pratica.importo_ordine = sum((o.totale for o in pratica.ordini if o.conta), Decimal("0.00"))
+    elif azzera_ordine:
+        pratica.importo_ordine = None
+    accettate = revisioni_accettate(pratica)
+    if accettate:
+        pratica.importo_offerta = sum((r.totale for r in accettate), Decimal("0.00"))
+    elif azzera_offerta:
+        pratica.importo_offerta = None
+    session.flush()
+
+
+def importi_calcolati(pratica: Pratica) -> dict[str, bool]:
+    """Quali importi della scheda vengono dalle righe e quindi non si scrivono a mano."""
+    return {"importo_ordine": bool(pratica.ordini), "importo_offerta": bool(revisioni_accettate(pratica))}
+
+
+def allocato(riga_offerta: RigaOfferta, *, escludi_ordine_id: int | None = None) -> tuple[Decimal, Decimal]:
+    """Quantità e importo della riga d'offerta già coperti dagli ordini che contano (confermati, non annullati)."""
+    quantita = importo = Decimal(0)
+    for allocazione in riga_offerta.allocazioni:
+        if allocazione.riga_ordine is None:
+            continue
+        ordine = allocazione.riga_ordine.ordine
+        if not ordine.conta or ordine.id == escludi_ordine_id:
+            continue
+        quantita += Decimal(allocazione.quantita or 0)
+        importo += Decimal(allocazione.importo or 0)
+    return quantita, importo
+
+
+def residuo_riga(riga_offerta: RigaOfferta) -> Decimal | None:
+    if riga_offerta.importo is None:
+        return None
+    return riga_offerta.importo - allocato(riga_offerta)[1]
+
+
+def residuo_revisione(revisione: RevisioneOfferta) -> Decimal:
+    """Quanto dell'offerta non è ancora ordinato: resta un residuo, senza attività autorizzate."""
+    return sum((max(r, Decimal(0)) for r in (residuo_riga(x) for x in revisione.righe) if r is not None), Decimal("0.00"))
+

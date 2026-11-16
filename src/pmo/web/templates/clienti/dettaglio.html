@@ -11,7 +11,7 @@
       {{ eyebrow("Cliente", etichette_tipo.get(cliente.tipo, cliente.tipo)) }}
       <p class="tr-figure">
         <span class="tr-figure__number">{{ pratiche | length }}</span>
-        <span class="tr-figure__label tr-mono tr-mono--muted">pratiche<br>visibili</span>
+        <span class="tr-figure__label tr-mono tr-mono--muted">commesse<br>visibili</span>
       </p>
       <dl class="tr-facts">
         <div><dt>P.IVA</dt><dd>{{ cliente.partita_iva or '-' }}</dd></div>
@@ -26,7 +26,7 @@
       {% if not cliente.attivo %}<div class="pmo-scheda__stati pmo-mt-5"><span class="tr-status">Disattivato</span></div>{% endif %}
       <div class="tr-btn-group">
         <a class="tr-btn tr-btn--quiet" href="/clienti"><span>Tutti i clienti</span></a>
-        <a class="tr-btn tr-btn--secondary" href="/pratiche?cliente_id={{ cliente.id }}&tutte=1"><span>Pratiche del cliente</span></a>
+        <a class="tr-btn tr-btn--secondary" href="/pratiche?cliente_id={{ cliente.id }}&tutte=1"><span>Commesse del cliente</span></a>
       </div>
     </div>
   </div>
@@ -119,12 +119,12 @@
 
 <section class="tr-card pmo-section" aria-labelledby="t-pratiche-cliente">
   <div class="tr-card__head">
-    <h2 class="tr-card__title" id="t-pratiche-cliente">Le <em>pratiche</em></h2>
+    <h2 class="tr-card__title" id="t-pratiche-cliente">Le <em>commesse</em></h2>
     <span class="tr-card__aside">solo quelle che puoi vedere</span>
   </div>
   {% if pratiche %}
   <div class="pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Pratica</th><th>Fase</th><th>Team</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
+    <thead><tr><th>Commessa</th><th>Fase</th><th>Team</th><th>Responsabile</th><th>Ultima attività</th></tr></thead>
     <tbody>
     {% for p in pratiche %}
       <tr>
@@ -138,7 +138,7 @@
     </tbody>
   </table></div>
   {% else %}
-  <p class="tr-card__empty">Nessuna pratica visibile per questo cliente</p>
+  <p class="tr-card__empty">Nessuna commessa visibile per questo cliente</p>
   {% endif %}
 </section>
 {% endblock %}

@@ -17,8 +17,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from pmo.db.base import utcnow
 from pmo.db.models import (
+    Conformita,
     Evento,
     Gravita,
+    Ordine,
     Pratica,
     Regola,
     Sollecito,
@@ -193,6 +195,21 @@ def valuta_pratica(pratica: Pratica, regole: dict[str, Regola], *, oggi: date, a
                 )
             )
 
+    regola = attiva("ordine_con_scostamenti")
+    if regola and pratica.stato not in (StatoPratica.CHIUSA, StatoPratica.ANNULLATA):
+        difformi = [o for o in pratica.ordini if o.conta and o.conformita == Conformita.SCOSTAMENTI and not o.derogato]
+        if difformi:
+            nomi = ", ".join(o.nome for o in difformi)
+            esiti.append(
+                Esito(
+                    regola.codice,
+                    regola.gravita,
+                    f"Ordine diverso dall'offerta: {nomi}",
+                    "L'ordine non corrisponde all'offerta: correggere le righe o registrare una deroga motivata.",
+                    {"ordini": [o.id for o in difformi]},
+                )
+            )
+
     regola = attiva("pratica_inattiva")
     if regola and pratica.stato not in (StatoPratica.CHIUSA,):
         riferimento = pratica.ultimo_evento_at or pratica.stato_dal or pratica.created_at
@@ -235,7 +252,7 @@ def esegui_regole(session: Session, *, oggi: date | None = None, adesso: datetim
     session.flush()
     regole = assicura_regole(session)
     pratiche = session.scalars(
-        select(Pratica).options(selectinload(Pratica.eventi)).where(Pratica.stato_verifica != StatoVerifica.RIFIUTATO.value)
+        select(Pratica).options(selectinload(Pratica.eventi), selectinload(Pratica.ordini).selectinload(Ordine.righe)).where(Pratica.stato_verifica != StatoVerifica.RIFIUTATO.value)
     ).all()
     esistenti = {s.chiave: s for s in session.scalars(select(Sollecito)).all()}
     contatori = {"pratiche": len(pratiche), "nuovi": 0, "riaperti": 0, "aggiornati": 0, "risolti": 0, "attivi": 0}

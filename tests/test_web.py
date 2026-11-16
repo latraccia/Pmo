@@ -120,9 +120,19 @@ def test_il_commit_avviene_prima_della_risposta():
     from fastapi.routing import APIRoute
 
     from pmo.web.deps import get_db
-    from pmo.web.routes import auth, caselle, clienti, dashboard, impostazioni, pratiche, revisione, solleciti
+    from pmo.web.routes import (
+        auth,
+        caselle,
+        clienti,
+        dashboard,
+        impostazioni,
+        ordini,
+        pratiche,
+        revisione,
+        solleciti,
+    )
 
-    moduli = (auth, caselle, clienti, dashboard, impostazioni, pratiche, revisione, solleciti)
+    moduli = (auth, caselle, clienti, dashboard, impostazioni, ordini, pratiche, revisione, solleciti)
 
     def sessioni(dipendente):  # noqa: ANN001, ANN202
         for sotto in dipendente.dependencies:

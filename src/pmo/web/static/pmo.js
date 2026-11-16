@@ -197,6 +197,95 @@
       f.addEventListener('change', aggiorna);
       aggiorna();
     });
+
+    // Tendine dentro le tabelle che scorrono (.pmo-scroll): il contenitore taglierebbe il pannello aperto, sia
+    // verso il basso sia verso l'alto, e la tabella sopra lo coprirebbe. Aperto, il pannello si aggancia alla
+    // finestra (position: fixed) alla posizione del campo, e si allarga quanto serve per leggere le voci.
+    var allinea = function (field) {
+      var panel = field.querySelector('.tr-select__panel');
+      var trigger = field.querySelector('.tr-select__trigger');
+      if (!panel || !trigger) { return; }
+      if (field.getAttribute('data-open') !== 'true') {
+        ['position', 'left', 'right', 'top', 'bottom', 'width', 'minWidth', 'maxWidth', 'zIndex'].forEach(function (p) { panel.style[p] = ''; });
+        return;
+      }
+      var r = trigger.getBoundingClientRect();
+      panel.style.position = 'fixed';
+      panel.style.left = r.left + 'px';
+      panel.style.right = 'auto';
+      panel.style.minWidth = r.width + 'px';
+      panel.style.width = 'max-content';
+      panel.style.maxWidth = Math.max(r.width, Math.min(480, window.innerWidth - r.left - 16)) + 'px';
+      panel.style.zIndex = '60';
+      if (field.getAttribute('data-drop') === 'up') {
+        panel.style.top = 'auto';
+        panel.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+      } else {
+        panel.style.bottom = 'auto';
+        panel.style.top = (r.bottom + 6) + 'px';
+      }
+    };
+    var tendine = document.querySelectorAll('.pmo-scroll .tr-select');
+    if (tendine.length && window.MutationObserver) {
+      var osservatore = new MutationObserver(function (cambi) {
+        cambi.forEach(function (c) { allinea(c.target); });
+      });
+      Array.prototype.forEach.call(tendine, function (field) {
+        osservatore.observe(field, { attributes: true, attributeFilter: ['data-open', 'data-drop'] });
+      });
+      var riallinea = function () {
+        Array.prototype.forEach.call(document.querySelectorAll('.pmo-scroll .tr-select[data-open="true"]'), allinea);
+      };
+      window.addEventListener('scroll', riallinea, true);
+      window.addEventListener('resize', riallinea);
+    }
+
+    // Righe di offerte e ordini, colonna "Dal listino". Scelto un articolo: codice e descrizione diventano quelli
+    // del listino e si bloccano; prezzo e IVA si copiano se vuoti o ancora uguali all'articolo di prima (un prezzo
+    // trattato resta). "Riga libera" sblocca codice e descrizione. Il nome intero dell'articolo scelto, che nel
+    // menu stretto si legge a meta', compare come suggerimento passandoci sopra.
+    Array.prototype.forEach.call(document.querySelectorAll('select[data-listino]'), function (s) {
+      var modulo = s.getAttribute('form');
+      var precedente = s.options[s.selectedIndex] || null;
+      var bloccati = { modulo: 'codice', descrizione: 'descrizione' };
+      var liberi = { prezzo_unitario: 'prezzo', aliquota_iva: 'iva' };
+      var campo = function (nome) { return document.getElementById(modulo + '-' + nome); };
+      var suggerimento = function () {
+        var scelta = s.options[s.selectedIndex];
+        var testo = scelta && scelta.value ? scelta.text : 'Riga libera: codice, descrizione e prezzo si scrivono a mano';
+        var trigger = document.getElementById(s.id + '-trigger');
+        [s, trigger].forEach(function (el) { if (el) { el.title = testo; } });
+      };
+      var blocca = function (attivo) {
+        Object.keys(bloccati).forEach(function (nome) {
+          var input = campo(nome);
+          if (!input) { return; }
+          input.readOnly = attivo;
+          if (attivo) { input.title = 'Dal listino: si cambia in Impostazioni → Listino oppure scegliendo Riga libera'; }
+          else { input.removeAttribute('title'); }
+        });
+      };
+      suggerimento();
+      s.addEventListener('change', function () {
+        var scelta = s.options[s.selectedIndex];
+        var articolo = scelta && scelta.value;
+        if (articolo) {
+          Object.keys(bloccati).forEach(function (nome) {
+            var input = campo(nome);
+            if (input) { input.value = scelta.getAttribute('data-' + bloccati[nome]) || ''; }
+          });
+          Object.keys(liberi).forEach(function (nome) {
+            var input = campo(nome);
+            if (!input) { return; }
+            var prima = precedente && precedente.value ? (precedente.getAttribute('data-' + liberi[nome]) || '') : '';
+            if (input.value === '' || input.value === prima) { input.value = scelta.getAttribute('data-' + liberi[nome]) || ''; }
+          });
+        }
+        blocca(!!articolo);
+        suggerimento();
+        precedente = scelta;
+      });
+    });
   }
 
   if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', avvio); }

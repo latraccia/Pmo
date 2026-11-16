@@ -2,7 +2,7 @@
 {% from "_ds.html" import eyebrow, campo, area, selezione, spunta, csrf with context %}
 {% block titolo %}Impostazioni · {{ app_name }}{% endblock %}
 {% block contenuto %}
-{% set schede = [('regole', 'Regole di sollecito'), ('filtri', 'Filtri posta'), ('prodotti', 'Prodotti'), ('utenti', 'Utenti e ruoli'), ('team', 'Team'), ('claude', 'Collega Claude')] | selectattr(0, 'in', schede_consentite) | list %}
+{% set schede = [('regole', 'Regole di sollecito'), ('filtri', 'Filtri posta'), ('prodotti', 'Prodotti'), ('listino', 'Listino'), ('utenti', 'Utenti e ruoli'), ('team', 'Team'), ('claude', 'Collega Claude')] | selectattr(0, 'in', schede_consentite) | list %}
 
 {#- Un comando da copiare: riga mono con il pulsante di copia (pmo.js, data-copia). -#}
 {% macro comando(testo, messaggio="Comando copiato negli appunti.") -%}
@@ -14,11 +14,12 @@
 
 {% set guida = {
   'regole': "Le regole vengono valutate dopo ogni sincronizzazione e con «Ricalcola adesso» nella pagina dei solleciti. Qui si regolano soglia, gravità e attivazione.",
-  'filtri': "I messaggi che corrispondono a questi filtri vengono importati ma segnati come ignorati senza passare dall'IA. Un codice pratica nell'oggetto vince sempre sui filtri.",
+  'filtri': "I messaggi che corrispondono a questi filtri vengono importati ma segnati come ignorati senza passare dall'IA. Un codice commessa nell'oggetto vince sempre sui filtri.",
   'prodotti': "Prodotti e aree di attività, con gli alias con cui compaiono nelle mail e nei documenti.",
-  'utenti': "Le persone che accedono a PANificator 360, il loro ruolo, i team di cui fanno parte e chi riceve la notifica email. La notifica è un riepilogo giornaliero (alle " ~ ('%02d:%02d' % (settings.digest_hour, settings.digest_minute)) ~ ") inviato all'indirizzo email dell'utente, con i soli solleciti e le verifiche delle pratiche che vede. Direzione e amministrazione vedono tutte le pratiche; gli altri ruoli solo quelle dei propri team.",
-  'team': "I gruppi di lavoro: ogni pratica appartiene a un team e la vedono i suoi membri. Un utente può stare in più team.",
-  'claude': "Come collegare Claude Code a PANificator 360 con il protocollo MCP: pratiche, scadenze e solleciti diventano interrogabili in linguaggio naturale. Comandi e percorsi sono già quelli di questa installazione."} %}
+  'listino': "Gli articoli che si vendono, con codice e descrizione. Nelle righe di offerte e ordini si scelgono da qui e ne riprendono descrizione, prezzo e IVA, che restano modificabili. Un articolo disattivato non si propone più, ma resta sulle righe che lo usano.",
+  'utenti': "Le persone che accedono a PANificator 360, il loro ruolo, i team di cui fanno parte e chi riceve la notifica email. La notifica è un riepilogo giornaliero (alle " ~ ('%02d:%02d' % (settings.digest_hour, settings.digest_minute)) ~ ") inviato all'indirizzo email dell'utente, con i soli solleciti e le verifiche delle commesse che vede. Direzione e amministrazione vedono tutte le commesse; gli altri ruoli solo quelle dei propri team.",
+  'team': "I gruppi di lavoro: ogni commessa appartiene a un team e la vedono i suoi membri. Un utente può stare in più team.",
+  'claude': "Come collegare Claude Code a PANificator 360 con il protocollo MCP: commesse, scadenze e solleciti diventano interrogabili in linguaggio naturale. Comandi e percorsi sono già quelli di questa installazione."} %}
 {#- La testata della pagina sul suo piano bianco, chiusa dalla fila delle sezioni. -#}
 <div class="tr-panel">
   <div class="pmo-testata">
@@ -98,14 +99,58 @@
   </table></div>
 {% endif %}
 
+{% if scheda == 'listino' %}
+  <details class="tr-card pmo-details">
+    <summary><span class="pmo-details__label">Nuovo articolo</span></summary>
+    <form method="post" action="/impostazioni/listino" class="pmo-details__body">
+      {{ csrf() }}<input type="hidden" name="nuovo" value="1">
+      <div class="pmo-grid">
+        {{ campo("codice", "Codice", obbligatorio=true, segnaposto="GPD-LIC-01") }}
+        {{ campo("descrizione", "Descrizione", segnaposto="Licenza Gepadial, un anno") }}
+        {% call selezione("prodotto_id", "Prodotto") %}<option value="">Nessuno</option>{% for p in prodotti if p.attivo %}<option value="{{ p.id }}">{{ p.nome }}</option>{% endfor %}{% endcall %}
+        {{ campo("unita", "Unità", segnaposto="pz, anno, giorno/uomo") }}
+        {{ campo("prezzo_listino", "Prezzo di listino (€)", segnaposto="1200,00") }}
+        {{ campo("aliquota_iva", "IVA %", "22") }}
+      </div>
+      <div class="tr-card__foot"><button class="tr-btn tr-btn--primary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi al listino</span></button></div>
+    </form>
+  </details>
+
+  <section class="pmo-section" aria-label="Articoli del listino">
+  {% if articoli %}
+  <div class="tr-panel pmo-scroll"><table class="pmo-table pmo-righe pmo-listino">
+    <thead><tr><th>Codice</th><th>Descrizione</th><th>Prodotto</th><th>Unità</th><th class="pmo-num">Prezzo (€)</th><th class="pmo-num">IVA %</th><th>Attivo</th><th><span class="tr-sr-only">Azioni</span></th></tr></thead>
+    <tbody>
+    {% for a in articoli %}
+      {%- set f = "art" ~ a.id -%}
+      {%- set nel = 'form="' ~ f ~ '"' -%}
+      <tr>
+        <td>{{ campo("codice", "Codice", a.codice, compatto=true, affiancata=false, attr=nel ~ ' required', id=f ~ "-codice") }}</td>
+        <td>{{ campo("descrizione", "Descrizione", a.descrizione, compatto=true, affiancata=false, attr=nel, id=f ~ "-descrizione") }}</td>
+        <td>{% call selezione("prodotto_id", "Prodotto", compatto=true, affiancata=false, attr=nel, id=f ~ "-prodotto") %}<option value="">Nessuno</option>{% for p in prodotti %}<option value="{{ p.id }}" {{ 'selected' if a.prodotto_id == p.id }}>{{ p.nome }}</option>{% endfor %}{% endcall %}</td>
+        <td>{{ campo("unita", "Unità", a.unita, compatto=true, affiancata=false, stretto=true, attr=nel, id=f ~ "-unita") }}</td>
+        <td class="pmo-num">{{ campo("prezzo_listino", "Prezzo di listino", a.prezzo_listino | campo, compatto=true, affiancata=false, stretto=true, attr=nel, id=f ~ "-prezzo") }}</td>
+        <td class="pmo-num">{{ campo("aliquota_iva", "IVA", a.aliquota_iva | campo, compatto=true, affiancata=false, stretto=true, attr=nel, id=f ~ "-iva") }}</td>
+        <td><label class="pmo-check"><input type="checkbox" name="attivo" value="1" form="{{ f }}"{% if a.attivo %} checked{% endif %} aria-label="Articolo attivo"></label></td>
+        <td class="pmo-righe__azioni"><form id="{{ f }}" method="post" action="/impostazioni/listino">{{ csrf() }}<input type="hidden" name="articolo_id" value="{{ a.id }}"><button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Salva</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <div class="tr-panel"><p class="tr-card__empty">Il listino è vuoto: aggiungi gli articoli che vendi, con codice e descrizione</p></div>
+  {% endif %}
+  </section>
+{% endif %}
+
 {% if scheda == 'claude' and mcp %}
   <section class="tr-card" aria-labelledby="t-claude-cosa">
     <div class="tr-card__head"><h2 class="tr-card__title" id="t-claude-cosa">Interrogare {{ app_name }} da <em>Claude</em></h2></div>
-    <p class="tr-body">Il server MCP di {{ app_name }} fa leggere a Claude le pratiche, la cronologia con i link a mail e documenti, i solleciti e la coda di revisione. Gira sul tuo PC, avviato da Claude, e non apre porte di rete. Una volta collegato puoi chiedere, ad esempio:</p>
+    <p class="tr-body">Il server MCP di {{ app_name }} fa leggere a Claude le commesse, la cronologia con i link a mail e documenti, i solleciti e la coda di revisione. Gira sul tuo PC, avviato da Claude, e non apre porte di rete. Una volta collegato puoi chiedere, ad esempio:</p>
     <ul class="pmo-elenco">
       <li>«Quali ordini sono senza specifiche da più di 15 giorni?»</li>
-      <li>«Riassumi la pratica PMO-2026-0042: cosa è successo e cosa manca?»</li>
-      <li>«Fammi vedere le pratiche proposte dall'IA per Azienda Zero, da confermare.»</li>
+      <li>«Riassumi la commessa PMO-2026-0042: cosa è successo e cosa manca?»</li>
+      <li>«Fammi vedere le commesse proposte dall'IA per Azienda Zero, da confermare.»</li>
       <li>«Cerca nei documenti l'ID dell'accordo quadro SAC 3.»</li>
     </ul>
     <p class="pmo-dato">Dati letti: {{ mcp.database }}</p>
@@ -163,7 +208,7 @@
           <p class="tr-body">Nella sessione già aperta ricarica i plugin, poi lancia la verifica: Claude chiama il server e ti dice se risponde e in quale modalità.</p>
           {{ comando(mcp.comandi.ricarica) }}
           {{ comando(mcp.comandi.verifica) }}
-          <p class="pmo-dato">Oppure chiedi semplicemente: «come siamo messi con le pratiche?»</p>
+          <p class="pmo-dato">Oppure chiedi semplicemente: «come siamo messi con le commesse?»</p>
         </div>
       </li>
     </ol>
@@ -215,7 +260,7 @@
     <span class="tr-notice__icon" aria-hidden="true"></span>
     <div class="tr-notice__content">
       <p class="tr-notice__title">Prima di abilitare la scrittura</p>
-      <p class="tr-notice__body">Con la scrittura abilitata Claude può confermare o scartare pratiche, cambiare stati, aggiungere note e gestire i solleciti, sempre su tua richiesta e con la nota «via MCP» nella cronologia. Si abilita dall'opzione «Abilita le azioni di scrittura» del plugin (<span class="pmo-code">/config</span>, poi <span class="pmo-code">/reload-plugins</span>) oppure chiedendo a Claude <span class="pmo-code">/pmo-la-traccia:collega scrittura</span>.</p>
+      <p class="tr-notice__body">Con la scrittura abilitata Claude può confermare o scartare commesse, cambiare stati, aggiungere note e gestire i solleciti, sempre su tua richiesta e con la nota «via MCP» nella cronologia. Si abilita dall'opzione «Abilita le azioni di scrittura» del plugin (<span class="pmo-code">/config</span>, poi <span class="pmo-code">/reload-plugins</span>) oppure chiedendo a Claude <span class="pmo-code">/pmo-la-traccia:collega scrittura</span>.</p>
       <p class="tr-notice__body">Mail e documenti sono contenuti esterni e possono contenere istruzioni ingannevoli: per questo il collegamento parte in sola lettura e le azioni vanno sempre riviste prima di dare l'ok. Quello che Claude legge entra nella conversazione ed è elaborato da Anthropic: valuta se è adatto ai dati dei clienti.</p>
       <p class="tr-notice__body">Il collegamento funziona sul PC dove sono installati il progetto e il database. Per altri colleghi servono un database condiviso (PostgreSQL) e l'installazione su ogni PC. Maggiori dettagli in <span class="pmo-code">docs/mcp.md</span>.</p>
     </div>
@@ -275,7 +320,7 @@
   <section class="pmo-section" aria-label="Elenco dei team">
   {% if teams %}
   <div class="tr-panel pmo-scroll"><table class="pmo-table">
-    <thead><tr><th>Team</th><th>Membri</th><th>Caselle</th><th>Pratiche attive</th></tr></thead>
+    <thead><tr><th>Team</th><th>Membri</th><th>Caselle</th><th>Commesse attive</th></tr></thead>
     <tbody>
     {% for t in teams %}
       {%- set n = conteggi_team.get(t.id, {}) -%}
@@ -290,7 +335,7 @@
     </tbody>
   </table></div>
   {% else %}
-  <div class="tr-panel"><p class="tr-card__empty">Nessun team: creane uno per dividere le pratiche tra i gruppi di lavoro</p></div>
+  <div class="tr-panel"><p class="tr-card__empty">Nessun team: creane uno per dividere le commesse tra i gruppi di lavoro</p></div>
   {% endif %}
   </section>
 {% endif %}
