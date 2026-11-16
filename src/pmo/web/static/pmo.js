@@ -78,8 +78,7 @@
   function viste() {
     var cont = document.querySelector('[data-viste]');
     if (!cont) { return; }
-    var tabs = Array.prototype.slice.call(document.querySelectorAll('.pmo-viste-barra [role="tab"]'));
-    var chiave = 'pmo-vista:' + location.pathname;
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-viste-tabs] [role="tab"]'));
 
     function attiva(tab, conFocus, scorri) {
       tabs.forEach(function (t) {
@@ -91,13 +90,13 @@
       });
       if (conFocus) { tab.focus(); }
       var nome = tab.id.replace('tab-', '');
-      try {
-        history.replaceState(null, '', '#' + nome);
-        sessionStorage.setItem(chiave, nome);
-      } catch (e) { /* senza storage resta la vista corrente */ }
-      // la barra si vede da tutta la pagina: se le viste sono fuori dallo schermo, ci si porta li'
-      var alto = cont.getBoundingClientRect().top;
-      if (scorri && (alto < 0 || alto > window.innerHeight * 0.6)) { cont.scrollIntoView({ block: 'start' }); }
+      try { history.replaceState(null, '', '#' + nome); } catch (e) { /* resta la vista corrente */ }
+      // le tabs restano agganciate in cima: se si era scesi dentro una vista lunga, la nuova parte dall'inizio
+      var barra = document.querySelector('[data-viste-tabs]');
+      var sotto = barra ? barra.getBoundingClientRect().bottom : 0;
+      if (scorri && cont.getBoundingClientRect().top < sotto) {
+        window.scrollBy(0, cont.getBoundingClientRect().top - sotto - 16);
+      }
     }
 
     tabs.forEach(function (t, i) {
@@ -112,8 +111,9 @@
       });
     });
 
+    // Si parte sempre dalla prima vista (Cronologia); solo un indirizzo con #vista, come il ritorno dopo
+    // un'azione o un collegamento diretto, apre quella.
     var iniziale = location.hash.slice(1);
-    if (!iniziale) { try { iniziale = sessionStorage.getItem(chiave) || ''; } catch (e) { iniziale = ''; } }
     for (var k = 0; k < tabs.length; k++) {
       if (tabs[k].id === 'tab-' + iniziale) { attiva(tabs[k], false); break; }
     }

@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pmo.db.models import (
+    AllocazioneRiga,
     Articolo,
     Cliente,
     Evento,
@@ -170,6 +171,67 @@ def crea_ordine(
         messaggio = session.get(Messaggio, messaggio_id)
         if messaggio is not None:
             ordine.messaggi.append(messaggio)
+    return ordine
+
+
+REVISIONI_ORDINABILI = (StatoRevisione.INVIATA, StatoRevisione.ACCETTATA)
+
+
+def quantita_da_ordinare(riga_offerta: RigaOfferta) -> Decimal | None:
+    """Quanto della riga d'offerta non è ancora coperto dagli ordini che contano (None se la quantità manca)."""
+    if riga_offerta.quantita is None:
+        return None
+    return Decimal(riga_offerta.quantita) - allocato(riga_offerta)[0]
+
+
+def ordine_da_revisione(
+    session: Session,
+    revisione: RevisioneOfferta,
+    *,
+    numero: str = "",
+    data_ordine: date | None = None,
+    user_id: int | None = None,
+) -> Ordine:
+    """Un ordine che riprende la revisione d'offerta: riferimento, condizioni e le righe con la quantità ancora da
+    ordinare (le righe già ordinate per intero si saltano). Ogni riga copiata resta abbinata a mano alla sua riga
+    d'offerta, così la verifica le confronta sempre giuste anche se poi si cambiano quantità o prezzi."""
+    if revisione.stato not in REVISIONI_ORDINABILI:
+        raise ValueError("L'ordine si crea da una revisione inviata o accettata.")
+    da_copiare: list[tuple[RigaOfferta, Decimal | None]] = []
+    for riga in sorted(revisione.righe, key=lambda r: (r.posizione or 0, r.id)):
+        quantita = quantita_da_ordinare(riga)
+        if quantita is None or quantita > 0:
+            da_copiare.append((riga, quantita))
+    if not da_copiare:
+        raise ValueError("Tutte le righe dell'offerta sono già ordinate." if revisione.righe else "L'offerta non ha righe da ordinare.")
+    offerta = revisione.offerta
+    ordine = crea_ordine(
+        session,
+        offerta.pratica,
+        numero=numero,
+        data_ordine=data_ordine,
+        revisione_offerta_id=revisione.id,
+        riferimento_offerta=offerta.numero,
+        condizioni=revisione.condizioni,
+        user_id=user_id,
+    )
+    for posizione, (origine, quantita) in enumerate(da_copiare, start=1):
+        riga = RigaOrdine(
+            posizione=posizione,
+            articolo_id=origine.articolo_id,
+            prodotto_id=origine.prodotto_id,
+            modulo=origine.modulo,
+            descrizione=origine.descrizione,
+            quantita=quantita,
+            prezzo_unitario=origine.prezzo_unitario,
+            sconto_pct=origine.sconto_pct,
+            aliquota_iva=origine.aliquota_iva,
+            stato_verifica=StatoVerifica.CONFERMATO,
+        )
+        riga.allocazioni.append(AllocazioneRiga(riga_offerta=origine, origine="manuale"))
+        ordine.righe.append(riga)
+    session.flush()
+    ricalcola_importi_commessa(session, offerta.pratica)
     return ordine
 
 
@@ -340,6 +402,11 @@ def elimina_riga(session: Session, contenitore: RevisioneOfferta | Ordine, riga_
     riga = next((r for r in contenitore.righe if r.id == riga_id), None)
     if riga is None:
         raise ValueError("Riga non trovata")
+    # Gli abbinamenti spariscono con la riga: si tolgono anche dall'altra parte, così i residui sono subito giusti.
+    for allocazione in list(riga.allocazioni):
+        for lato in (allocazione.riga_offerta, allocazione.riga_ordine):
+            if lato is not None and lato is not riga and allocazione in lato.allocazioni:
+                lato.allocazioni.remove(allocazione)
     contenitore.righe.remove(riga)
     session.flush()
     ricalcola_importi_commessa(session, _commessa(contenitore))

@@ -83,6 +83,20 @@
   {% if ordini %}
   <ul class="pmo-list">{% for o in ordini %}<li><a class="pmo-voce__titolo" href="/ordini/{{ o.id }}">{{ o.nome }}</a> {{ conformita(o) }} <span class="pmo-meta">{{ o.totale | euro }}</span></li>{% endfor %}</ul>
   {% else %}<p class="tr-card__empty">Nessun ordine</p>{% endif %}
+  {% if modificabile and ordinabile %}
+  <details class="pmo-details pmo-mt-5" {{ 'open' if not ordini and revisione.stato == 'accettata' }}>
+    <summary><span class="pmo-details__label">Crea l'ordine da questa revisione</span></summary>
+    <form method="post" action="/revisioni/{{ revisione.id }}/ordine" class="pmo-details__body">
+      {{ csrf() }}
+      <p class="pmo-small">L'ordine riprende le righe con la quantità ancora da ordinare{% if ordini %} (tolto quanto è già negli altri ordini){% endif %}, i prezzi e le condizioni dell'offerta. Poi togli o correggi quello che il cliente non ha ordinato: la verifica confronta ogni riga con la sua riga d'offerta.</p>
+      <div class="pmo-grid">
+        {{ campo("numero", "Numero d'ordine del cliente", segnaposto="4500123456") }}
+        {{ campo("data_ordine", "Data", tipo="date") }}
+      </div>
+      <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea l'ordine</span></button></div>
+    </form>
+  </details>
+  {% endif %}
 </section>
 {% endif %}
 

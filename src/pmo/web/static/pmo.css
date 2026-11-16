@@ -559,37 +559,25 @@ a.pmo-title-link:focus-visible { outline: 2px solid var(--tr-brand-500); outline
 
 /* ==========================================================================
    Viste di una pagina di dettaglio
-   La barra delle tabs ancorata in fondo (.tr-tabs--bottom, il filetto sopra la tab punta
-   al contenuto) e' fissa sul bordo inferiore dello schermo, sempre visibile. Parte dal
-   menu laterale e ne copre il filetto destro: menu e barra sono un solo piano bianco a L,
-   e il filetto sopra la barra continua quello sopra la base del menu, alla stessa altezza.
-   Le tabs stanno sulla colonna del contenuto (.pmo-container).
-   Si vede una vista alla volta; senza JavaScript le viste sono tutte in pagina e la barra
-   non serve, quindi non compare.
+   Le tabs stanno subito sotto la testata (le tappe della commessa) e la chiudono: stesso
+   piano bianco, a filo, separate da un filetto. Scorrendo restano agganciate in cima allo
+   schermo, cosi' si cambia vista da qualunque punto. Si vede una vista alla volta; senza
+   JavaScript le viste sono tutte in pagina e le tabs non servono, quindi non compaiono.
    ========================================================================== */
-.pmo-viste-barra { display: none; }
-.pmo-js .pmo-viste-barra {
+.pmo-viste-tabs { display: none; }
+.pmo-js .pmo-viste-tabs {
   display: block;
-  position: fixed;
+  position: sticky;
+  top: 0;
   z-index: 20;
-  left: calc(var(--pmo-side-w) - var(--tr-rule-thin));
-  right: 0;
-  bottom: 0;
-  box-sizing: border-box;
-  height: var(--pmo-base-h);
-  margin: 0;
+  padding: 0 var(--tr-space-7);
   border-top: var(--tr-rule-thin) solid var(--tr-border-soft);
+  border-bottom: var(--tr-rule-thin) solid var(--tr-border-soft);
   background: var(--tr-surface);
 }
-.pmo-viste-barra > .tr-tabs { height: 100%; border-top: 0; background: transparent; }
-/* La barra copre il fondo dello schermo: la pagina finisce sopra di lei, e i messaggi
-   transitori salgono oltre. */
-.pmo-js .pmo-shell:has(.pmo-viste-barra) { padding-bottom: var(--pmo-base-h); }
-.pmo-js body:has(.pmo-viste-barra) .tr-toast-region { bottom: calc(var(--pmo-base-h) + var(--tr-space-5)); }
-/* Sotto i 900px il menu sta in testa: la barra prende tutta la larghezza. */
-@media (max-width: 900px) {
-  .pmo-js .pmo-viste-barra { left: 0; }
-}
+.pmo-container.pmo-main > .pmo-viste-tabs { margin-top: 0; }
+.pmo-viste-tabs > .tr-tabs { border: 0; background: transparent; }
+@media (max-width: 720px) { .pmo-js .pmo-viste-tabs { padding: 0 var(--tr-space-5); } }
 .pmo-js .pmo-vista:not(.is-attiva) { display: none; }
 .pmo-vista + .pmo-vista { margin-top: var(--tr-space-5); }
 .pmo-js .pmo-vista + .pmo-vista { margin-top: 0; }

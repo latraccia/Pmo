@@ -37,7 +37,7 @@ La notifica email giornaliera (nel codice "digest") elenca i solleciti aperti e 
 La verifica (`services/verifica_ordini.py`) non usa l'IA e si rifà a ogni modifica delle righe dell'ordine o dell'offerta.
 L'ordine si confronta con la revisione d'offerta indicata sull'ordine o, se manca, con l'ultima revisione accettata della commessa.
 
-1. **Abbinamento delle righe**: prima l'abbinamento scelto a mano nella pagina dell'ordine, poi lo stesso articolo del listino, poi stesso prodotto e modulo, poi stessa descrizione (senza maiuscole e punteggiatura).
+1. **Abbinamento delle righe**: prima l'abbinamento scelto a mano nella pagina dell'ordine, poi lo stesso articolo del listino, poi stesso prodotto e modulo, poi stessa descrizione (senza maiuscole e punteggiatura). Un ordine creato dall'offerta (pagina dell'offerta, "Crea l'ordine da questa revisione", da una revisione inviata o accettata) riprende le righe con la quantità ancora da ordinare, i prezzi e le condizioni, e ogni riga nasce abbinata a mano alla sua riga d'offerta: si tolgono o si correggono solo le righe che il cliente non ha ordinato.
 2. **Cliente e riferimenti**: il cliente dell'offerta deve essere quello della commessa dell'ordine; il numero d'offerta citato nell'ordine deve essere quello dell'offerta.
 3. **Perimetro**: una riga senza corrispondenza è "non prevista dall'offerta"; una quantità oltre quanto resta della riga d'offerta, contando gli altri ordini confermati e non annullati, è uno scostamento.
 4. **Importi**: il totale della riga si confronta con il prezzo netto offerto per la stessa quantità; la tolleranza è il maggiore tra `tolleranza_euro` e `tolleranza_percento` della regola `ordine_con_scostamenti`.

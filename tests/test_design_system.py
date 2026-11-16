@@ -181,12 +181,15 @@ def test_paginazione_conserva_i_filtri(client, db):
     assert "q=Ordine&amp;pagina=2" in html
 
 
-def test_dettaglio_con_viste_e_barra_in_fondo(client, db):
+def test_dettaglio_con_viste_e_tabs_sotto_le_tappe(client, db):
     _login(client)
     pratica = svc.crea_pratica(db, "Prova viste")
     db.commit()
     html = client.get(f"/pratiche/{pratica.id}").text
-    assert re.search(r'<div class="pmo-viste-barra">\s*<div class="tr-tabs tr-tabs--bottom pmo-container" role="tablist"', html)
+    # le tabs vengono subito dopo la testata con le tappe, prima delle viste
+    assert re.search(r'<div class="pmo-viste-tabs" data-viste-tabs>\s*<div class="tr-tabs" role="tablist"', html)
+    assert html.index('class="pmo-tappe"') < html.index("data-viste-tabs") < html.index("data-viste>")
+    assert "tr-tabs--bottom" not in html
     for vista in ("cronologia", "messaggi", "documenti", "solleciti", "scheda"):
         assert f'id="vista-{vista}" role="tabpanel" aria-labelledby="tab-{vista}"' in html
         assert f'id="tab-{vista}" aria-controls="vista-{vista}"' in html

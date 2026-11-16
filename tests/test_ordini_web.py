@@ -237,3 +237,24 @@ def test_numero_doppio_e_evento_eliminato_dalle_pagine(client, scenario, db):
     client.post(f"/pratiche/{pa.id}/eventi/{eid}/elimina", data={"csrf_token": csrf})
     db.expire_all()
     assert db.get(Ordine, creato) is None and db.get(Evento, eid) is None
+
+
+def test_crea_ordine_dall_offerta(client, scenario, db):
+    revisione = scenario["offerta"].revisioni[0]
+    pa = scenario["pa"]
+    csrf = _login(client, "op@latraccia.it")
+    assert client.post(f"/revisioni/{revisione.id}/ordine", data={"csrf_token": csrf, "numero": "X"}).status_code == 403
+    csrf = _login(client, "comm@latraccia.it")
+    assert "Crea l'ordine da questa revisione" in client.get(f"/offerte/{scenario['offerta'].id}").text
+    r = client.post(f"/revisioni/{revisione.id}/ordine", data={"csrf_token": csrf, "numero": "4500-9", "data_ordine": "2026-11-16"})
+    assert r.status_code == 303
+    oid = _id_da(r.headers["location"])
+    db.expire_all()
+    ordine = db.get(Ordine, oid)
+    assert [x.modulo for x in ordine.righe] == ["A", "B", "C"] and ordine.totale == Decimal("30000.00")
+    assert ordine.conformita == "conforme" and not ordine.parziale and ordine.riferimento_offerta == "OFF-1"
+    assert db.get(type(pa), pa.id).stato == "ordine"
+    # tutto ordinato: il modulo sparisce e un nuovo tentativo dà un messaggio, non un ordine vuoto
+    assert "Crea l'ordine da questa revisione" not in client.get(f"/offerte/{scenario['offerta'].id}").text
+    r = client.post(f"/revisioni/{revisione.id}/ordine", data={"csrf_token": csrf, "numero": "4500-10"}, follow_redirects=True)
+    assert "già ordinate" in r.text

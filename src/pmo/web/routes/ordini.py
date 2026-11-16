@@ -323,6 +323,9 @@ def offerta_dettaglio(request: Request, offerta_id: int, session: Db, rev: int =
         residui={r.id: svc.residuo_riga(r) for r in revisione.righe} if revisione else {},
         residuo=svc.residuo_revisione(revisione) if revisione else 0,
         ordini=ordini,
+        ordinabile=revisione is not None
+        and revisione.stato in svc.REVISIONI_ORDINABILI
+        and any(q is None or q > 0 for q in map(svc.quantita_da_ordinare, revisione.righe)),
         articoli=_articoli(session),
         clienti=_clienti(session),
         stati_revisione=list(ETICHETTE_REVISIONE.items()),
@@ -466,10 +469,39 @@ def ordine_nuovo(
     except ValueError as exc:
         flash(request, str(exc), "errore")
         return redirect(f"/pratiche/{pratica.id}#ordini")
-    # Come per un ordine arrivato per mail: la commessa passa almeno alla fase "ordine" (mai all'indietro).
+    _fase_ordine(session, pratica, ordine, utente)
+    flash(request, "Ordine creato: aggiungi le righe.")
+    return redirect(f"/ordini/{ordine.id}")
+
+
+def _fase_ordine(session: Session, pratica: Pratica, ordine: Ordine, utente: User) -> None:
+    """Come per un ordine arrivato per mail: la commessa passa almeno alla fase "ordine" (mai all'indietro)."""
     if pratica.stato in FASI_ORDINATE and FASI_ORDINATE.index(StatoPratica(pratica.stato)) < FASI_ORDINATE.index(StatoPratica.ORDINE):
         svc_pratiche.cambia_stato(session, pratica, StatoPratica.ORDINE, motivo=f"Registrato {ordine.nome}", user_id=utente.id)
-    flash(request, "Ordine creato: aggiungi le righe.")
+
+
+@router.post("/revisioni/{revisione_id}/ordine", dependencies=[Depends(verifica_csrf)])
+def ordine_da_revisione(
+    request: Request,
+    revisione_id: int,
+    session: Db,
+    numero: str = Form(""),
+    data_ordine: str = Form(""),
+    utente: User = Depends(gestione),
+):
+    """L'ordine che riprende la revisione: righe con la quantità ancora da ordinare, da correggere se il cliente ha
+    ordinato meno."""
+    revisione = _revisione(session, revisione_id, utente)
+    pratica = revisione.offerta.pratica
+    try:
+        ordine = svc.ordine_da_revisione(session, revisione, numero=numero, data_ordine=_date(data_ordine) or date.today(), user_id=utente.id)
+    except ValueError as exc:
+        flash(request, str(exc), "errore")
+        return _ritorno_revisione(revisione)
+    verifica_ordine(session, ordine, user_id=utente.id)
+    _riverifica(session, pratica, escludi=ordine)
+    _fase_ordine(session, pratica, ordine, utente)
+    flash(request, f"{ordine.nome} creato dall'offerta con {len(ordine.righe)} righe: togli o correggi quello che il cliente non ha ordinato.")
     return redirect(f"/ordini/{ordine.id}")
 
 

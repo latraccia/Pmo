@@ -375,3 +375,42 @@ def test_evento_scartato_porta_via_l_ordine_non_toccato(db, commessa):
     nota = svc.rifiuta_evento(db, evento2)
     db.expire(commessa, ["ordini"])
     assert len(commessa.ordini) == 1 and commessa.ordini[0].evento_id is None and "resta" in nota
+
+
+def test_ordine_creato_dall_offerta(db, commessa, offerta_30k):
+    """Le righe si copiano con la quantità ancora da ordinare e restano abbinate alla loro riga d'offerta."""
+    offerta_30k.condizioni = "Pagamento 60 gg"
+    primo = svc_ordini.ordine_da_revisione(db, offerta_30k, numero="ORD-1")
+    assert [r.modulo for r in primo.righe] == ["A", "B", "C"]
+    assert primo.riferimento_offerta == "OFF-12" and primo.revisione_offerta_id == offerta_30k.id
+    assert primo.condizioni == "Pagamento 60 gg" and primo.totale == D("30000.00")
+    assert all(a.origine == "manuale" for r in primo.righe for a in r.allocazioni)
+    # il cliente ha ordinato solo A e C: si toglie B, ed è conforme e parziale
+    svc_ordini.elimina_riga(db, primo, next(r.id for r in primo.righe if r.modulo == "B"))
+    verifica_ordine(db, primo)
+    assert primo.conformita == Conformita.CONFORME and primo.parziale and primo.totale == D("18000.00")
+    with pytest.raises(ValueError, match="c'è già"):  # lo stesso numero non si riusa
+        svc_ordini.ordine_da_revisione(db, offerta_30k, numero="ord 1")
+    # il secondo ordine riprende solo B, quello che manca
+    secondo = svc_ordini.ordine_da_revisione(db, offerta_30k, numero="ORD-2")
+    assert [(r.modulo, r.quantita) for r in secondo.righe] == [("B", D(1))]
+    verifica_ordine(db, secondo)
+    verifica_ordine(db, primo)
+    assert secondo.conformita == Conformita.CONFORME and not secondo.parziale and not primo.parziale
+    assert commessa.importo_ordine == D("30000.00")
+    # tutto ordinato: un terzo ordine non ha niente da riprendere
+    with pytest.raises(ValueError, match="già ordinate"):
+        svc_ordini.ordine_da_revisione(db, offerta_30k, numero="ORD-3")
+
+
+def test_ordine_dall_offerta_quantita_residua_e_revisione_in_bozza(db, commessa):
+    offerta = svc_ordini.crea_offerta(db, commessa, numero="OFF-20")
+    revisione = offerta.revisioni[0]
+    svc_ordini.salva_riga(db, revisione, None, _riga("G", "500", "10"))
+    with pytest.raises(ValueError, match="inviata o accettata"):
+        svc_ordini.ordine_da_revisione(db, revisione)
+    svc_ordini.imposta_stato_revisione(db, revisione, StatoRevisione.ACCETTATA)
+    primo = _ordine(db, commessa, [_riga("G", "500", "4")], numero="A1")
+    verifica_ordine(db, primo)
+    secondo = svc_ordini.ordine_da_revisione(db, revisione, numero="A2")
+    assert secondo.righe[0].quantita == D(6) and secondo.totale == D("3000.00")
