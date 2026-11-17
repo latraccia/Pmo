@@ -64,6 +64,16 @@ FASI_ORDINATE: list[StatoPratica] = [
 STATI_ATTIVI: set[StatoPratica] = set(FASI_ORDINATE) - {StatoPratica.CHIUSA}
 STATI_TERMINALI: set[StatoPratica] = {StatoPratica.CHIUSA, StatoPratica.ANNULLATA}
 
+class TipoPratica(enum.StrEnum):
+    """Il tipo di lavoro della commessa: una fornitura (licenze, sviluppo, hardware, avviamento) o una manutenzione
+    (assistenza e canoni, di solito una commessa per periodo)."""
+
+    FORNITURA = "fornitura"
+    MANUTENZIONE = "manutenzione"
+
+
+ETICHETTE_TIPO_PRATICA: dict[str, str] = {"fornitura": "Fornitura", "manutenzione": "Manutenzione"}
+
 ETICHETTE_STATO: dict[str, str] = {
     "bozza": "Bozza",
     "stima": "Stima",
@@ -417,6 +427,7 @@ class Pratica(Base):
     descrizione: Mapped[str] = mapped_column(Text, default="")
     cliente_id: Mapped[int | None] = mapped_column(ForeignKey("clienti.id"), index=True)
     prodotto_id: Mapped[int | None] = mapped_column(ForeignKey("prodotti.id"), index=True)
+    tipo: Mapped[str] = mapped_column(String(16), default=TipoPratica.FORNITURA, server_default="fornitura", index=True)
     stato: Mapped[str] = mapped_column(String(32), default=StatoPratica.BOZZA, index=True)
     stato_dal: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
     stato_verifica: Mapped[str] = mapped_column(String(16), default=StatoVerifica.CONFERMATO, index=True)
@@ -459,6 +470,16 @@ class Pratica(Base):
     @property
     def etichetta_stato(self) -> str:
         return ETICHETTE_STATO.get(self.stato, self.stato)
+
+    @property
+    def etichetta_tipo(self) -> str:
+        return ETICHETTE_TIPO_PRATICA.get(self.tipo, self.tipo)
+
+    @property
+    def ordine_principale(self) -> Ordine | None:
+        """Di regola una commessa ha un ordine solo: il primo registrato e non annullato. Gli altri sono integrazioni
+        (un ordine aggiuntivo o una tranche della stessa offerta): ammesse, ma segnalate."""
+        return next((o for o in sorted(self.ordini, key=lambda o: o.id or 0) if o.avanzamento != "annullato"), None)
 
     @property
     def attiva(self) -> bool:
@@ -805,6 +826,12 @@ class Ordine(Base):
     @property
     def totale(self) -> Decimal:
         return totale_righe(self.righe)
+
+    @property
+    def integrazione(self) -> bool:
+        """Un ordine che si aggiunge all'ordine principale della commessa."""
+        principale = self.pratica.ordine_principale if self.pratica is not None else None
+        return principale is not None and principale is not self and self.avanzamento != "annullato"
 
     @property
     def nome(self) -> str:

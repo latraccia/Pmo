@@ -184,7 +184,11 @@ def portafoglio(
     )
     pagina = pagina_per(request, totale, PER_PAGINA)
     ordini = session.scalars(
-        query.options(selectinload(Ordine.righe), selectinload(Ordine.pratica).selectinload(Pratica.cliente))
+        query.options(
+            selectinload(Ordine.righe),
+            selectinload(Ordine.pratica).selectinload(Pratica.cliente),
+            selectinload(Ordine.pratica).selectinload(Pratica.ordini),  # per riconoscere le integrazioni
+        )
         .order_by(Ordine.data_ordine.desc().nulls_last(), Ordine.id.desc())
         .offset(pagina.offset)
         .limit(pagina.per_pagina)
@@ -283,6 +287,12 @@ def offerte_elenco(
         teams=_teams_visibili(session, utente),
         clienti=_clienti(session),
         stati=list(ETICHETTE_REVISIONE.items()),
+        commesse=session.scalars(
+            filtra_pratiche(select(Pratica), utente)
+            .where(Pratica.stato.not_in([s.value for s in STATI_TERMINALI]))
+            .options(selectinload(Pratica.cliente))
+            .order_by(Pratica.codice.desc())
+        ).all(),
     )
 
 
@@ -298,6 +308,29 @@ def offerta_nuova(
     utente: User = Depends(gestione),
 ):
     pratica = carica_pratica_visibile(session, pratica_id, utente)
+    return _crea_offerta(request, session, pratica, utente, cliente_id, numero, titolo, data, errore_a=f"/pratiche/{pratica.id}#ordini")
+
+
+@router.post("/offerte/nuova", dependencies=[Depends(verifica_csrf)])
+def offerta_nuova_da_elenco(
+    request: Request,
+    session: Db,
+    pratica_id: str = Form(""),
+    cliente_id: str = Form(""),
+    numero: str = Form(""),
+    titolo: str = Form(""),
+    data: str = Form(""),
+    utente: User = Depends(gestione),
+):
+    """La stessa creazione della scheda della commessa, dalla pagina Offerte: la commessa si sceglie nel modulo."""
+    if (pid := _intero_o(pratica_id, None)) is None:
+        flash(request, "Scegli la commessa dell'offerta.", "errore")
+        return redirect("/offerte")
+    pratica = carica_pratica_visibile(session, pid, utente)
+    return _crea_offerta(request, session, pratica, utente, cliente_id, numero, titolo, data, errore_a="/offerte")
+
+
+def _crea_offerta(request: Request, session: Session, pratica: Pratica, utente: User, cliente_id: str, numero: str, titolo: str, data: str, *, errore_a: str):
     try:
         offerta = svc.crea_offerta(
             session, pratica, cliente_id=_intero_o(cliente_id, None), numero=numero, titolo=titolo, data=_date(data) or date.today(),
@@ -305,7 +338,7 @@ def offerta_nuova(
         )
     except ValueError as exc:
         flash(request, str(exc), "errore")
-        return redirect(f"/pratiche/{pratica.id}#ordini")
+        return redirect(errore_a)
     flash(request, "Offerta creata: aggiungi le righe.")
     return redirect(f"/offerte/{offerta.id}")
 
@@ -474,8 +507,15 @@ def ordine_nuovo(
         flash(request, str(exc), "errore")
         return redirect(f"/pratiche/{pratica.id}#ordini")
     _fase_ordine(session, pratica, ordine, utente)
-    flash(request, "Ordine creato: aggiungi le righe.")
+    flash(request, "Ordine creato: aggiungi le righe." + _avviso_integrazione(ordine))
     return redirect(f"/ordini/{ordine.id}")
+
+
+def _avviso_integrazione(ordine: Ordine) -> str:
+    principale = ordine.pratica.ordine_principale
+    if not ordine.integrazione or principale is None:
+        return ""
+    return f" La commessa ha già l'ordine principale ({principale.numero or principale.nome}): questo è registrato come integrazione."
 
 
 def _fase_ordine(session: Session, pratica: Pratica, ordine: Ordine, utente: User) -> None:
@@ -505,7 +545,7 @@ def ordine_da_revisione(
     verifica_ordine(session, ordine, user_id=utente.id)
     _riverifica(session, pratica, escludi=ordine)
     _fase_ordine(session, pratica, ordine, utente)
-    flash(request, f"{ordine.nome} creato dall'offerta con {len(ordine.righe)} righe: togli o correggi quello che il cliente non ha ordinato.")
+    flash(request, f"{ordine.nome} creato dall'offerta con {len(ordine.righe)} righe: togli o correggi quello che il cliente non ha ordinato." + _avviso_integrazione(ordine))
     return redirect(f"/ordini/{ordine.id}")
 
 

@@ -21,6 +21,9 @@
         <option value="">Da indicare</option>
         {% for c in clienti %}<option value="{{ c.id }}">{{ c.nome }}</option>{% endfor %}
       {% endcall %}
+      {% call selezione("tipo", "Tipo", aiuto="Fornitura: licenze, sviluppo, hardware. Manutenzione: assistenza e canoni") %}
+        {% for k, v in tipi.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+      {% endcall %}
       {% call selezione("prodotto_id", "Prodotto") %}
         <option value="">Da indicare</option>
         {% for p in prodotti %}<option value="{{ p.id }}">{{ p.nome }}</option>{% endfor %}

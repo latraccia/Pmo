@@ -15,6 +15,7 @@ from pmo.config import get_settings
 from pmo.db.models import (
     ETICHETTE_EVENTO,
     ETICHETTE_STATO,
+    ETICHETTE_TIPO_PRATICA,
     Cliente,
     Documento,
     Evento,
@@ -168,6 +169,7 @@ def elenco(
     stato: str = "",
     cliente_id: IdFiltro = None,
     prodotto_id: IdFiltro = None,
+    tipo: str = "",
     responsabile_id: str = "",  # un identificativo, oppure "nessuno" per le pratiche senza responsabile
     team_id: str = "",  # un identificativo, oppure "nessuno" per le pratiche senza team
     verifica: str = "",
@@ -202,6 +204,10 @@ def elenco(
         query = query.where(Pratica.cliente_id == cliente_id)
     if prodotto_id:
         query = query.where(Pratica.prodotto_id == prodotto_id)
+    if tipo in ETICHETTE_TIPO_PRATICA:
+        query = query.where(Pratica.tipo == tipo)
+    else:
+        tipo = ""
     if senza_responsabile:
         query = query.where(Pratica.responsabile_user_id.is_(None))
     elif responsabile:
@@ -262,8 +268,9 @@ def elenco(
         totali_attese={chiave: len(azioni[chiave]) for chiave in ("risposta", "attesa_cliente", "attese")},
         azioni_da_fare=AZIONI_DA_FARE,
         scadenze=scadenze_vicine(session),
-        filtri={"q": q, "stato": stato, "cliente_id": cliente_id, "prodotto_id": prodotto_id, "responsabile_id": responsabile, "team_id": team, "verifica": verifica, "tutte": tutte, "azione": azione},
+        filtri={"q": q, "stato": stato, "cliente_id": cliente_id, "prodotto_id": prodotto_id, "tipo": tipo, "responsabile_id": responsabile, "team_id": team, "verifica": verifica, "tutte": tutte, "azione": azione},
         stati=ETICHETTE_STATO,
+        tipi=ETICHETTE_TIPO_PRATICA,
     )
 
 
@@ -282,6 +289,7 @@ def nuova(request: Request, session: Session = Depends(get_db, scope="function")
         teams=_team_assegnabili(session, utente),
         team_proposto=team_predefinito(utente),
         stati=ETICHETTE_STATO,
+        tipi=ETICHETTE_TIPO_PRATICA,
     )
 
 
@@ -292,6 +300,7 @@ def crea(
     descrizione: str = Form(""),
     cliente_id: str = Form(""),
     prodotto_id: str = Form(""),
+    tipo: str = Form("fornitura"),
     stato: str = Form("bozza"),
     responsabile_id: str = Form(""),
     sostituto_id: str = Form(""),
@@ -311,6 +320,7 @@ def crea(
         descrizione=descrizione,
         cliente=session.get(Cliente, int(cliente_id)) if cliente_id else None,
         prodotto=session.get(Prodotto, int(prodotto_id)) if prodotto_id else None,
+        tipo=tipo,
         stato=stato,
         responsabile_user_id=_id_utente(responsabile_id) or utente.id,
         sostituto_user_id=_id_utente(sostituto_id),
@@ -357,6 +367,7 @@ def dettaglio(request: Request, pratica_id: int, session: Session = Depends(get_
         utenti=utenti,
         teams=_team_assegnabili(session, utente),
         stati=ETICHETTE_STATO,
+        tipi=ETICHETTE_TIPO_PRATICA,
         stati_consentiti={k: v for k, v in ETICHETTE_STATO.items() if puo_passare_a(utente, k)},
         tipi_evento=[(t, ETICHETTE_EVENTO[t]) for t in TIPI_EVENTO_MANUALI],
         riferimenti_testo="\n".join(f"{k}={v}" for k, v in (pratica.riferimenti or {}).items()),
@@ -373,6 +384,7 @@ def modifica(
     descrizione: str = Form(""),
     cliente_id: str = Form(""),
     prodotto_id: str = Form(""),
+    tipo: str = Form(""),
     responsabile_id: str = Form(""),
     sostituto_id: str = Form(""),
     team_id: str = Form(""),
@@ -395,6 +407,8 @@ def modifica(
         pratica.descrizione = descrizione
         pratica.cliente_id = int(cliente_id) if cliente_id else None
         pratica.prodotto_id = int(prodotto_id) if prodotto_id else None
+        if tipo in ETICHETTE_TIPO_PRATICA:
+            pratica.tipo = tipo
         pratica.priorita = priorita
         pratica.data_scadenza = _date(data_scadenza)
         pratica.riferimenti = _riferimenti(riferimenti)

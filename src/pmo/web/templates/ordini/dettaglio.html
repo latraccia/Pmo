@@ -25,7 +25,7 @@
     </aside>
     <div class="tr-intro__main">
       <h1 class="pmo-titolo">{{ ordine.nome }}</h1>
-      <p class="tr-intro__lead"><a href="/pratiche/{{ pratica.id }}">{{ pratica.titolo }}</a>{% if pratica.cliente %} · {{ pratica.cliente.nome }}{% endif %}</p>
+      <p class="tr-intro__lead"><a href="/pratiche/{{ pratica.id }}">{{ pratica.titolo }}</a>{% if pratica.cliente %} · {{ pratica.cliente.nome }}{% endif %}{% if ordine.integrazione %} · <span class="tr-chip">Integrazione</span> dell'ordine principale <a href="/ordini/{{ pratica.ordine_principale.id }}">{{ pratica.ordine_principale.numero or pratica.ordine_principale.nome }}</a>{% endif %}</p>
       <div class="pmo-scheda__stati pmo-mt-5">
         {{ conformita(ordine) }}
         {% if ordine.stato_verifica == 'proposto' %}<span class="tr-status tr-status--warning">Da confermare</span>{% endif %}

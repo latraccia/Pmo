@@ -111,7 +111,7 @@
       });
     });
 
-    // Si parte sempre dalla prima vista (Cronologia); solo un indirizzo con #vista, come il ritorno dopo
+    // Si parte sempre dalla prima vista (la Scheda); solo un indirizzo con #vista, come il ritorno dopo
     // un'azione o un collegamento diretto, apre quella.
     var iniziale = location.hash.slice(1);
     for (var k = 0; k < tabs.length; k++) {

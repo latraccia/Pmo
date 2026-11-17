@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from pmo.db.base import utcnow
 from pmo.db.models import (
+    ETICHETTE_TIPO_PRATICA,
     FASE_PER_EVENTO,
     FASI_ORDINATE,
     STATI_TERMINALI,
@@ -105,6 +106,7 @@ def crea_pratica(
     descrizione: str = "",
     cliente: Cliente | None = None,
     prodotto: Prodotto | None = None,
+    tipo: str = "fornitura",
     stato: str = StatoPratica.BOZZA,
     origine: str = "manuale",
     stato_verifica: str = StatoVerifica.CONFERMATO,
@@ -130,6 +132,7 @@ def crea_pratica(
         descrizione=descrizione or "",
         cliente=cliente,
         prodotto=prodotto,
+        tipo=tipo if tipo in ETICHETTE_TIPO_PRATICA else "fornitura",
         stato=stato,
         stato_dal=stato_dal or utcnow(),
         origine=origine,

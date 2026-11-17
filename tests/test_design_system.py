@@ -194,6 +194,10 @@ def test_dettaglio_con_viste_e_tabs_sotto_le_tappe(client, db):
         assert f'id="vista-{vista}" role="tabpanel" aria-labelledby="tab-{vista}"' in html
         assert f'id="tab-{vista}" aria-controls="vista-{vista}"' in html
     assert html.count('aria-selected="true"') == 1
+    # si parte dalla Scheda, prima nella barra; la Cronologia è l'ultima
+    assert re.search(r'id="tab-scheda" aria-controls="vista-scheda" aria-selected="true"', html)
+    assert 'class="tr-card pmo-vista is-attiva" id="vista-scheda"' in html
+    assert html.index('id="tab-scheda"') < html.index('id="tab-messaggi"') < html.index('id="tab-ordini"') < html.index('id="tab-cronologia"')
 
 
 def test_tappe_della_pratica_in_riga(client, db):

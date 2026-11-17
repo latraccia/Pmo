@@ -35,7 +35,7 @@
     <div class="tr-intro__main">
       {#- Il titolo di una pratica e' contenuto, spesso un nome proprio: in frase. -#}
       <h1 class="pmo-titolo">{{ pratica.titolo }}</h1>
-      <p class="tr-intro__lead">{{ pratica.cliente.nome if pratica.cliente else 'Cliente da indicare' }}{% if pratica.prodotto %} · {{ pratica.prodotto.nome }}{% endif %}</p>
+      <p class="tr-intro__lead">{{ pratica.etichetta_tipo }} · {{ pratica.cliente.nome if pratica.cliente else 'Cliente da indicare' }}{% if pratica.prodotto %} · {{ pratica.prodotto.nome }}{% endif %}</p>
       <p class="pmo-meta">Responsabile {{ (pratica.responsabile.nome or pratica.responsabile.email) if pratica.responsabile else 'da indicare' }}{% if pratica.sostituto %} · sostituto {{ pratica.sostituto.nome or pratica.sostituto.email }}{% endif %}</p>
       {% if pratica.descrizione %}<div class="tr-intro__prose"><p class="tr-body pmo-text">{{ pratica.descrizione }}</p></div>{% endif %}
       {#- La fase sta gia' nei dati a sinistra e nelle tappe qui sotto; qui solo cio' che non c'e' altrove. -#}
@@ -105,12 +105,12 @@
     Cambiare vista non e' navigare.
     =========================================================================== -#}
 {% set viste = [
-  ("cronologia", "Cronologia", eventi | length),
+  ("scheda", "Scheda", none),
   ("messaggi", "Messaggi", messaggi | length),
   ("documenti", "Documenti", documenti | length),
   ("solleciti", "Solleciti", aperti | length),
   ("ordini", "Offerte e ordini", pratica.ordini | length),
-  ("scheda", "Scheda", none)] %}
+  ("cronologia", "Cronologia", eventi | length)] %}
 
 <div class="pmo-viste-tabs" data-viste-tabs>
   <div class="tr-tabs" role="tablist" aria-label="Viste della commessa">
@@ -123,7 +123,7 @@
 <div class="pmo-viste" data-viste>
 
   {# ---- Cronologia ---- #}
-  <section class="tr-card pmo-vista is-attiva" id="vista-cronologia" role="tabpanel" aria-labelledby="tab-cronologia">
+  <section class="tr-card pmo-vista" id="vista-cronologia" role="tabpanel" aria-labelledby="tab-cronologia">
     <div class="tr-card__head">
       <h2 class="tr-card__title">Cronologia <em>eventi</em></h2>
       <span class="tr-card__aside">{{ eventi | length }} eventi</span>
@@ -335,7 +335,7 @@
       <tbody>
       {% for o in pratica.ordini %}
         <tr>
-          <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} {{ da_confermare() }}{% elif o.righe | selectattr("proposta") | list %} {{ da_confermare("Righe da controllare") }}{% endif %}</td>
+          <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a> {% if o.integrazione %}<span class="tr-chip" title="La commessa ha già un ordine principale: questo si aggiunge">Integrazione</span>{% endif %}<p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} {{ da_confermare() }}{% elif o.righe | selectattr("proposta") | list %} {{ da_confermare("Righe da controllare") }}{% endif %}</td>
           <td class="pmo-num">{{ o.totale | euro }}</td>
           <td>{{ conformita(o) }}</td>
           <td class="pmo-num">{{ (o.esito_verifica or {}).get('residuo') | euro if (o.esito_verifica or {}).get('residuo') else '-' }}</td>
@@ -363,7 +363,7 @@
   </section>
 
   {# ---- Scheda ---- #}
-  <section class="tr-card pmo-vista" id="vista-scheda" role="tabpanel" aria-labelledby="tab-scheda">
+  <section class="tr-card pmo-vista is-attiva" id="vista-scheda" role="tabpanel" aria-labelledby="tab-scheda">
     <div class="tr-card__head">
       <h2 class="tr-card__title">La <em>scheda</em></h2>
       <span class="tr-card__aside">origine {{ pratica.origine }}</span>
@@ -382,6 +382,7 @@
         {{ area("descrizione", "Descrizione", pratica.descrizione) }}
         <div class="pmo-grid">
           {% call selezione("cliente_id", "Cliente") %}<option value="">Da indicare</option>{% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if pratica.cliente_id == c.id }}>{{ c.nome }}</option>{% endfor %}{% endcall %}
+          {% call selezione("tipo", "Tipo") %}{% for k, v in tipi.items() %}<option value="{{ k }}" {{ 'selected' if pratica.tipo == k }}>{{ v }}</option>{% endfor %}{% endcall %}
           {% call selezione("prodotto_id", "Prodotto") %}<option value="">Da indicare</option>{% for p in prodotti %}<option value="{{ p.id }}" {{ 'selected' if pratica.prodotto_id == p.id }}>{{ p.nome }}</option>{% endfor %}{% endcall %}
           {% if puo(utente, 'assegnare') %}
           {% call selezione("team_id", "Team") %}<option value="">Da assegnare</option>{% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if pratica.team_id == t.id }}>{{ t.nome }}</option>{% endfor %}{% if pratica.team and pratica.team not in teams %}<option value="{{ pratica.team_id }}" selected>{{ pratica.team.nome }}</option>{% endif %}{% endcall %}

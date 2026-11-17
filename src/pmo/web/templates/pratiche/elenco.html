@@ -4,7 +4,7 @@
 {% block contenuto %}
 {#- L'indirizzo di questa pagina con i suoi filtri: il cambio di fase di una scheda torna qui. -#}
 {%- set ritorno = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') -%}
-{%- set filtrato = filtri.q or filtri.stato or filtri.cliente_id or filtri.prodotto_id or filtri.responsabile_id or filtri.team_id or filtri.verifica or filtri.tutte or filtri.azione -%}
+{%- set filtrato = filtri.q or filtri.stato or filtri.cliente_id or filtri.prodotto_id or filtri.tipo or filtri.responsabile_id or filtri.team_id or filtri.verifica or filtri.tutte or filtri.azione -%}
 {#- Il numero che riassume la pagina la apre; il testo e i filtri gli stanno accanto. -#}
 {#- La testata della pagina sta sul suo piano bianco, come ogni blocco di contenuto. -#}
 <div class="tr-panel">
@@ -53,6 +53,10 @@
           {% call selezione("cliente_id", "Cliente") %}
             <option value="">Tutti</option>
             {% for c in clienti %}<option value="{{ c.id }}" {{ 'selected' if filtri.cliente_id == c.id }}>{{ c.nome }}</option>{% endfor %}
+          {% endcall %}
+          {% call selezione("tipo", "Tipo") %}
+            <option value="">Tutti</option>
+            {% for k, v in tipi.items() %}<option value="{{ k }}" {{ 'selected' if filtri.tipo == k }}>{{ v }}</option>{% endfor %}
           {% endcall %}
           {% call selezione("prodotto_id", "Prodotto") %}
             <option value="">Tutti</option>
@@ -104,7 +108,7 @@
       <div class="tr-card__head tr-card__head--bare">
         <div>
           <h2 class="tr-card__title"><a class="pmo-scheda__link" href="/pratiche/{{ p.id }}">{{ p.titolo }}</a></h2>
-          <p class="tr-card__sub">{{ p.cliente.nome if p.cliente else 'Cliente da indicare' }}{% if p.prodotto %} · {{ p.prodotto.nome }}{% endif %}</p>
+          <p class="tr-card__sub">{% if p.tipo == 'manutenzione' %}Manutenzione · {% endif %}{{ p.cliente.nome if p.cliente else 'Cliente da indicare' }}{% if p.prodotto %} · {{ p.prodotto.nome }}{% endif %}</p>
         </div>
       </div>
       <div class="pmo-scheda__body">

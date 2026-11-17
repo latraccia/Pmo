@@ -49,6 +49,12 @@ Esito: **conforme**, **scostamenti**, oppure **non determinabile** (manca l'offe
 
 **Esempio.** Offerta da 30.000 € (A 10.000, B 12.000, C 8.000), ordine da 18.000 € per A e C: conforme, parziale, residuo 12.000 € sulla riga B.
 
+## Tipo della commessa e ordini di integrazione
+
+Ogni commessa è una **fornitura** (licenze, sviluppo, hardware, avviamento) oppure una **manutenzione** (assistenza e canoni: di solito una commessa per periodo). Il tipo si sceglie alla creazione, si cambia nella modifica della commessa e si filtra nell'elenco; le commesse nate prima del tipo sono forniture.
+
+Di regola una commessa ha **un ordine solo**: il primo registrato e non annullato è l'**ordine principale**. Un altro ordine sulla stessa commessa è ammesso (un ordine aggiuntivo, una tranche della stessa offerta) ma è segnato come **integrazione**, nella commessa, nel portafoglio ordini e nella sua pagina, e alla creazione compare un avviso. Se il principale viene annullato, il successivo prende il suo posto. La verifica contro l'offerta e il residuo valgono per tutti gli ordini insieme, come prima.
+
 ## Righe lette dai documenti
 
 Quando un evento **ordine ricevuto**, **offerta inviata** od **offerta accettata** viene confermato e viene da una mail con allegati PDF o Word, o da un documento Drive, il documento si mette in coda per la lettura. La lettura avviene al giro di sincronizzazione successivo (`services/estrazioni.py`, `ingest/estrazione_righe.py`, `ingest/estrattore.py`).

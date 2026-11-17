@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_ds.html" import eyebrow, campo, selezione, spunta, paginazione with context %}
+{% from "_ds.html" import eyebrow, campo, selezione, spunta, paginazione, csrf with context %}
 {% block titolo %}Offerte · {{ app_name }}{% endblock %}
 {% block contenuto %}
 <div class="tr-panel">
@@ -13,7 +13,7 @@
     </aside>
     <div class="tr-intro__main">
       <h1 class="tr-h3 tr-intro__title">Le <em>offerte</em></h1>
-      <p class="tr-intro__lead">Tutte le offerte delle commesse che vedi, con la revisione che conta (l'accettata, altrimenti l'ultima), il totale e quanto resta da ordinare. Un'offerta nuova si crea dalla sua commessa, nella scheda «Offerte e ordini».</p>
+      <p class="tr-intro__lead">Tutte le offerte delle commesse che vedi, con la revisione che conta (l'accettata, altrimenti l'ultima), il totale e quanto resta da ordinare. Un'offerta nuova si crea qui sotto, scegliendo la commessa, oppure dalla commessa stessa nella scheda «Offerte e ordini».</p>
       <form method="get" aria-label="Filtri">
         <div class="pmo-grid">
           {{ campo("q", "Cerca", filtri.q, segnaposto="numero o titolo dell'offerta, codice o titolo della commessa", icona="search") }}
@@ -27,6 +27,26 @@
           {% if filtri.values() | select | list %}<a class="tr-btn tr-btn--neutral tr-btn--sm" href="/offerte">Azzera</a>{% endif %}
         </div>
       </form>
+      {% if puo(utente, 'gestire_ordini') %}
+      <details class="pmo-details pmo-mt-5">
+        <summary><span class="pmo-details__label">Nuova offerta</span></summary>
+        {% if commesse %}
+        <form method="post" action="/offerte/nuova" class="pmo-details__body">
+          {{ csrf() }}
+          <div class="pmo-grid">
+            {% call selezione("pratica_id", "Commessa *", aiuto="Le commesse aperte che vedi", id="nuova-pratica_id") %}<option value="">Scegli la commessa</option>{% for p in commesse %}<option value="{{ p.id }}">{{ p.codice }} · {{ p.titolo }}{% if p.cliente %} ({{ p.cliente.nome }}){% endif %}</option>{% endfor %}{% endcall %}
+            {% call selezione("cliente_id", "Cliente", aiuto="Se non lo scegli vale quello della commessa", id="nuova-cliente_id") %}<option value="">Quello della commessa</option>{% for c in clienti %}<option value="{{ c.id }}">{{ c.nome }}</option>{% endfor %}{% endcall %}
+            {{ campo("numero", "Numero", segnaposto="P26_847", aiuto="Il numero di protocollo; non si può ripetere", id="nuova-numero") }}
+            {{ campo("titolo", "Titolo", segnaposto="Fornitura moduli A, B e C", id="nuova-titolo") }}
+            {{ campo("data", "Data", tipo="date", id="nuova-data") }}
+          </div>
+          <div class="tr-card__foot"><button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Crea l'offerta</span></button></div>
+        </form>
+        {% else %}
+        <p class="pmo-details__body pmo-small">Non ci sono commesse aperte: crea prima la commessa da <a href="/pratiche">Commesse</a>.</p>
+        {% endif %}
+      </details>
+      {% endif %}
     </div>
   </div>
 </div>

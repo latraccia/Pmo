@@ -323,3 +323,62 @@ def test_letture_non_riuscite_e_rileggi(client, scenario, db):
     db.commit()
     csrf = _login(client, "beta@latraccia.it")
     assert client.post(f"/estrazioni/{estrazione.id}/riprova", data={"csrf_token": csrf}).status_code == 404
+
+
+def test_nuova_offerta_dalla_pagina_offerte(client, scenario, db):
+    csrf = _login(client, "comm@latraccia.it")
+    pagina = client.get("/offerte").text
+    # si sceglie fra le commesse visibili: Alfa sì, Beta (altro team) no
+    assert 'action="/offerte/nuova"' in pagina and "Commessa Alfa" in pagina and "Commessa Beta" not in pagina
+    r = client.post("/offerte/nuova", data={"csrf_token": csrf, "pratica_id": str(scenario["pa"].id), "numero": "P26_900", "titolo": "Integrazione"})
+    assert r.status_code == 303 and r.headers["location"].startswith("/offerte/")
+    db.expire_all()
+    nuova = db.query(Offerta).filter_by(numero="P26_900").one()
+    assert nuova.pratica_id == scenario["pa"].id and nuova.cliente_id == scenario["cliente"].id  # cliente della commessa
+    assert nuova.revisioni[0].stato == "bozza"
+    # un numero non si ripete, scritto in qualunque modo e da qualunque commessa
+    r = client.post("/offerte/nuova", data={"csrf_token": csrf, "pratica_id": str(scenario["pa"].id), "numero": "p26 900"})
+    assert r.status_code == 303 and r.headers["location"] == "/offerte"
+    assert "Esiste già l&#39;offerta P26_900" in client.get("/offerte").text
+    assert db.query(Offerta).filter(Offerta.numero.ilike("%900%")).count() == 1
+    # senza commessa: errore, nessuna offerta; una commessa non visibile: 404
+    assert client.post("/offerte/nuova", data={"csrf_token": csrf, "numero": "X1"}).headers["location"] == "/offerte"
+    assert client.post("/offerte/nuova", data={"csrf_token": csrf, "pratica_id": str(scenario["pb"].id), "numero": "X2"}).status_code == 404
+    # l'operativo non crea offerte e non vede il modulo
+    csrf_op = _login(client, "op@latraccia.it")
+    assert 'action="/offerte/nuova"' not in client.get("/offerte").text
+    assert client.post("/offerte/nuova", data={"csrf_token": csrf_op, "pratica_id": str(scenario["pa"].id)}).status_code == 403
+
+
+def test_tipo_commessa_e_ordini_di_integrazione(client, scenario, db):
+    csrf = _login(client, "comm@latraccia.it")
+    pa = scenario["pa"]
+    assert pa.tipo == "fornitura"  # il tipo di base
+    # una commessa di manutenzione: si crea, si filtra, si vede nella scheda
+    r = client.post("/pratiche", data={"csrf_token": csrf, "titolo": "Canone 2027", "tipo": "manutenzione"})
+    assert r.status_code == 303
+    manut = _id_da(r.headers["location"])
+    assert "Manutenzione ·" in client.get(f"/pratiche/{manut}").text
+    assert "Canone 2027" in client.get("/pratiche?tipo=manutenzione").text
+    assert "Canone 2027" not in client.get("/pratiche?tipo=fornitura").text
+    # il tipo si cambia dalla modifica della commessa
+    client.post(f"/pratiche/{pa.id}/modifica", data={"csrf_token": csrf, "titolo": pa.titolo, "tipo": "manutenzione"})
+    db.expire_all()
+    assert db.get(type(pa), pa.id).tipo == "manutenzione"
+    # il primo ordine è il principale; il secondo è ammesso ma segnalato come integrazione
+    r = client.post(f"/pratiche/{pa.id}/ordini", data={"csrf_token": csrf, "numero": "4500-1"})
+    primo = _id_da(r.headers["location"])
+    assert "integrazione" not in client.get(f"/ordini/{primo}").text.lower()
+    r = client.post(f"/pratiche/{pa.id}/ordini", data={"csrf_token": csrf, "numero": "4500-2"})
+    secondo = _id_da(r.headers["location"])
+    pagina = client.get(f"/ordini/{secondo}").text
+    assert "registrato come integrazione" in pagina and "dell'ordine principale" in pagina
+    assert client.get(f"/pratiche/{pa.id}").text.count(">Integrazione</span>") == 1
+    db.expire_all()
+    assert db.get(Ordine, primo).integrazione is False and db.get(Ordine, secondo).integrazione is True
+    # annullato il primo, il secondo diventa il principale
+    o1 = db.get(Ordine, primo)
+    o1.avanzamento = "annullato"
+    db.commit()
+    db.expire_all()
+    assert db.get(Ordine, secondo).integrazione is False

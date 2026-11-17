@@ -66,7 +66,10 @@ def crea_offerta(
     user_id: int | None = None,
 ) -> Offerta:
     """Una nuova offerta con la sua prima revisione, in bozza e senza righe. Il cliente è obbligatorio: se non è
-    indicato vale quello della commessa; una commessa ancora senza cliente prende quello dell'offerta."""
+    indicato vale quello della commessa; una commessa ancora senza cliente prende quello dell'offerta. Un numero già
+    usato da un'altra offerta, in qualunque commessa, è rifiutato: ogni offerta ha un numero solo."""
+    if (esistente := offerta_con_numero(session, numero)) is not None:
+        raise ValueError(f"Esiste già l'offerta {esistente.numero} nella commessa {esistente.pratica.codice}.")
     cliente_id = cliente_obbligatorio(session, pratica, cliente_id)
     offerta = Offerta(
         pratica_id=pratica.id, cliente_id=cliente_id, numero=numero.strip()[:80], titolo=titolo.strip()[:300], note=note,

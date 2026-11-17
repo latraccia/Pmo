@@ -43,7 +43,7 @@
     <tbody>
     {% for o in ordini %}
       <tr>
-        <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} <span class="tr-status tr-status--warning">Da confermare</span>{% endif %}</td>
+        <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a> {% if o.integrazione %}<span class="tr-chip" title="La commessa ha già un ordine principale: questo si aggiunge">Integrazione</span>{% endif %}<p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} <span class="tr-status tr-status--warning">Da confermare</span>{% endif %}</td>
         <td><a href="/pratiche/{{ o.pratica_id }}">{{ o.pratica.codice }}</a><p class="pmo-dato">{{ o.pratica.titolo }}</p></td>
         <td>{{ o.pratica.cliente.nome if o.pratica.cliente else '-' }}</td>
         <td class="pmo-num">{{ o.totale | euro }}</td>
