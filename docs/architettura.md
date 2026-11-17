@@ -46,6 +46,7 @@ Gmail / Drive (per casella)        Claude (structured outputs)
 | `articoli` | listino di vendita: codice univoco, descrizione, prodotto, unità, prezzo di listino, IVA, attivo. Le righe di offerte e ordini possono indicare l'articolo (`articolo_id`) e ne copiano i dati |
 | `offerte`, `revisioni_offerta`, `righe_offerta` | offerte della commessa, ciascuna con il suo cliente (obbligatorio), con le revisioni (bozza, inviata, accettata, rifiutata, superata), le condizioni e le righe (modulo, quantità, prezzo, sconto, IVA; importo netto calcolato) |
 | `ordini`, `righe_ordine` | ordini della commessa con le righe; conformità all'offerta (esito della verifica in JSON), parziale, deroga (motivo, autore, data), avanzamento, attesa (chi aspetta chi e perché), chiave di idempotenza per gli ordini nati dagli eventi |
+| `estrazioni` | letture delle righe da un documento con Claude: fonte (mail, Drive, protocollo), mail o documento d'origine, ordine o revisione d'offerta di destinazione, stato (in attesa, fatta, non riletta, errore), tentativi, file letti con hash sha256, risultato (testata, righe, avvisi), modello e token. È insieme la coda e il registro: le righe lette ne portano l'`estrazione_id` |
 | `allocazioni_righe` | quanto di una riga d'offerta copre una riga d'ordine (automatica o manuale): da qui il residuo |
 | `ordini_messaggi` | mail collegate agli ordini: una mail può riguardare più ordini |
 | `eventi` | cronologia: tipo, data, titolo, descrizione, fonte (email/drive/manuale/sistema) con id e URL, importo, scadenza, confidenza, `stato_verifica` |
@@ -82,7 +83,8 @@ Un evento confermato porta la pratica alla fase che implica (tabella `FASE_PER_E
 2. `sincronizza_drive`: per ogni cartella monitorata, file nuovi o modificati → estratto → salvataggio → pre-collegamento per tag nel nome/percorso.
 3. `classifica_messaggi`: messaggi `nuovo` raggruppati per thread → prompt con storia del thread e pratica pre-collegata → chiamata al modello → `collega_messaggio`. Errori temporanei: nuovo tentativo al giro successivo (massimo 3). Commit per thread.
 4. `classifica_documenti`: a gruppi di 8 → `collega_documento`.
-5. `esegui_regole`: aggiorna i solleciti.
+5. `elabora_estrazioni` (`ingest/estrazione_righe.py`): le letture in coda di questa casella, accodate quando un evento ordine o offerta è stato confermato → scaricamento dei file (allegato Gmail, file Drive; i documenti Google esportati in PDF) → file già letti (stesso hash) saltati → `EstrattoreClaude` (PDF come blocchi `document`, listino e offerta di riferimento nel system in cache, schema `DocumentoLetto`) → `services/estrazioni.applica_risultato`: righe proposte, testata, verifica. Errori temporanei: nuovo tentativo al giro successivo (massimo 3); dopo errori consecutivi il giro si ferma senza consumare tentativi.
+6. `esegui_regole`: aggiorna i solleciti.
 
 ## Decisioni e limiti
 

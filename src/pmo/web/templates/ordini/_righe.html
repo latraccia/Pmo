@@ -18,7 +18,16 @@
 {% call selezione("articolo_id", "Dal listino", compatto=true, affiancata=false, attr='form="' ~ modulo ~ '" data-listino', id=modulo ~ "-articolo_id") %}<option value="">Riga libera</option>{% for a in articoli if a.attivo or a.id == scelto %}<option value="{{ a.id }}" data-codice="{{ a.codice }}" data-descrizione="{{ a.descrizione }}" data-prezzo="{{ a.prezzo_listino | campo }}" data-iva="{{ a.aliquota_iva | campo }}" {{ 'selected' if a.id == scelto }}>{{ a.etichetta }}</option>{% endfor %}{% endcall %}
 {%- endmacro -%}
 
-{%- macro tabella_righe(righe, base, modificabile=false, per_riga={}, totale=none, vuoto="Nessuna riga", articoli=[]) -%}
+{#- Per le righe libere lette da un documento: abbinarle a una voce del listino o aggiungerle al listino. -#}
+{%- macro azioni_listino(r, base, proposta) -%}
+{%- if proposta and proposta.abbina -%}
+<form method="post" action="{{ base }}/righe/{{ r.id }}/listino" class="pmo-inline">{{ csrf() }}<input type="hidden" name="articolo_id" value="{{ proposta.abbina.id }}"><button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit" title="{{ proposta.abbina.etichetta }}">Abbina a {{ proposta.abbina.codice }}</button></form>
+{%- elif proposta and proposta.nuovo -%}
+<form method="post" action="{{ base }}/righe/{{ r.id }}/listino" class="pmo-inline">{{ csrf() }}<button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit" title="Crea la voce {{ r.modulo }} nel listino con descrizione, prezzo e IVA di questa riga">Aggiungi al listino</button></form>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro tabella_righe(righe, base, modificabile=false, per_riga={}, totale=none, vuoto="Nessuna riga", articoli=[], listino={}) -%}
 {% if righe or modificabile %}
 {% if modificabile %}
 <p class="pmo-small pmo-righe__guida"><strong>Dal listino</strong>: scegli un articolo e la riga ne riprende codice, descrizione, prezzo e IVA. Codice e descrizione restano quelli del listino; prezzo, sconto e IVA si possono cambiare. Con <strong>Riga libera</strong> scrivi tutto a mano.</p>
@@ -36,7 +45,7 @@
       {% if modificabile %}
       <td class="pmo-num pmo-righe__pos">{{ cella("posizione", "Posizione", r.posizione, f) }}</td>
       <td class="pmo-righe__articolo">{{ scelta_articolo(f, articoli, r.articolo_id) }}</td>
-      <td class="pmo-righe__descr">{{ cella("modulo", "Codice o modulo", r.modulo, f, stretto=false, segnaposto="Codice", bloccato=r.articolo_id is not none) }}{{ cella("descrizione", "Descrizione", r.descrizione, f, stretto=false, segnaposto="Descrizione", bloccato=r.articolo_id is not none) }}{% for a in avvisi %}<p class="pmo-riga__avviso">{{ a }}</p>{% endfor %}{% if r.stato_verifica == 'proposto' %}<p class="pmo-riga__avviso">Riga proposta, da controllare</p>{% endif %}</td>
+      <td class="pmo-righe__descr">{{ cella("modulo", "Codice o modulo", r.modulo, f, stretto=false, segnaposto="Codice", bloccato=r.articolo_id is not none) }}{{ cella("descrizione", "Descrizione", r.descrizione, f, stretto=false, segnaposto="Descrizione", bloccato=r.articolo_id is not none) }}{% for a in avvisi %}<p class="pmo-riga__avviso">{{ a }}</p>{% endfor %}{% if r.stato_verifica == 'proposto' %}<p class="pmo-riga__avviso">Riga letta dal documento, da controllare</p>{% endif %}{{ azioni_listino(r, base, listino.get(r.id)) }}</td>
       <td class="pmo-num pmo-righe__qta">{{ cella("quantita", "Quantità", r.quantita | campo, f) }}</td>
       <td class="pmo-num pmo-righe__prezzo">{{ cella("prezzo_unitario", "Prezzo unitario", r.prezzo_unitario | campo, f) }}</td>
       <td class="pmo-num pmo-righe__pct">{{ cella("sconto_pct", "Sconto percentuale", r.sconto_pct | campo, f) }}</td>
@@ -48,7 +57,7 @@
       </td>
       {% else %}
       <td class="pmo-num">{{ r.posizione }}</td>
-      <td>{% if r.modulo %}<span class="pmo-dato">{{ r.modulo }}</span><br>{% endif %}{{ r.descrizione or '-' }}{% for a in avvisi %}<p class="pmo-riga__avviso">{{ a }}</p>{% endfor %}</td>
+      <td>{% if r.modulo %}<span class="pmo-dato">{{ r.modulo }}</span><br>{% endif %}{{ r.descrizione or '-' }}{% for a in avvisi %}<p class="pmo-riga__avviso">{{ a }}</p>{% endfor %}{% if r.stato_verifica == 'proposto' %}<p class="pmo-riga__avviso">Riga letta dal documento, da controllare</p>{% endif %}</td>
       <td class="pmo-num">{{ r.quantita | numero }}</td>
       <td class="pmo-num">{{ r.prezzo_unitario | euro }}</td>
       <td class="pmo-num">{{ r.sconto_pct | numero }}</td>

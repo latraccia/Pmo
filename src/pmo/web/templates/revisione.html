@@ -2,12 +2,13 @@
 {% from "_ds.html" import eyebrow, campo, fase, da_confermare, csrf, paginazione with context %}
 {% block titolo %}Revisione · {{ app_name }}{% endblock %}
 {% block contenuto %}
-{% set schede = [('pratiche', 'Commesse proposte'), ('messaggi', 'Mail da verificare'), ('documenti', 'Documenti da verificare'), ('errori', 'Errori')] %}
+{% set schede = [('pratiche', 'Commesse proposte'), ('messaggi', 'Mail da verificare'), ('documenti', 'Documenti da verificare'), ('letture', 'Letture non riuscite'), ('errori', 'Errori')] %}
 {% set totale = conteggi.pratiche + conteggi.messaggi + conteggi.documenti %}
 {% set guida = {
   'pratiche': "L'IA ha riconosciuto in queste mail commesse non ancora registrate. Confermandole, gli eventi estratti diventano effettivi; scartandole, i messaggi tornano qui per essere collegati a mano.",
   'messaggi': "Mail rilevanti che l'IA non ha saputo collegare con certezza. Conferma il collegamento proposto, indica la commessa giusta oppure ignora.",
   'documenti': "Documenti di Drive che l'IA ha letto ma non ha collegato con certezza a una commessa. Conferma la proposta, indica la commessa giusta oppure ignora.",
+  'letture': "Documenti di ordini e offerte (PDF, Word) da cui non si sono riuscite a leggere le righe. Si possono rileggere: lo farà il prossimo giro di sincronizzazione; altrimenti le righe si scrivono a mano nella pagina dell'ordine o dell'offerta.",
   'errori': "Messaggi che la classificazione non è riuscita a elaborare. Si possono rimettere in coda: verranno ritentati al prossimo giro."} %}
 
 {#- La testata della pagina sul suo piano bianco, chiusa dalla fila delle code. -#}
@@ -146,6 +147,32 @@
   </div>
   {{ paginazione(pagina) }}
   {% else %}<div class="tr-panel"><p class="tr-card__empty">Nessun documento da verificare</p></div>{% endif %}
+{% endif %}
+
+{% if scheda == 'letture' %}
+  {% if letture %}
+  <div class="tr-card-grid pmo-schede">
+    {% for e in letture %}
+    <article class="tr-card pmo-scheda">
+      <div class="tr-notice tr-notice--danger">
+        <span class="tr-notice__icon" aria-hidden="true"></span>
+        <div class="tr-notice__content">
+          <p class="tr-notice__title">Righe non lette</p>
+          <p class="tr-notice__body"><strong>{{ e.destinazione.nome if e.destinazione else 'Documento' }}</strong> · <a href="/pratiche/{{ e.pratica_id }}#ordini">{{ e.pratica.codice }}</a></p>
+          <p class="pmo-dato">{{ e.nome_file or e.fonte }}{% if e.elaborata_at %} · {{ e.elaborata_at | data }}{% endif %} · {{ e.tentativi }} tentativi</p>
+          <p class="tr-notice__body">{{ e.errore }}</p>
+          {% if puo(utente, 'gestire_ordini') %}
+          <div class="tr-btn-group pmo-notice-actions">
+            <form method="post" action="/estrazioni/{{ e.id }}/riprova">{{ csrf() }}<button class="tr-btn tr-btn--secondary tr-btn--sm" type="submit">Rileggi</button></form>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {{ paginazione(pagina) }}
+  {% else %}<div class="tr-panel"><p class="tr-card__empty">Nessuna lettura non riuscita</p></div>{% endif %}
 {% endif %}
 
 {% if scheda == 'errori' %}

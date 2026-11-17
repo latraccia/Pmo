@@ -48,3 +48,16 @@ Esito: **conforme**, **scostamenti**, oppure **non determinabile** (manca l'offe
 **Deroga.** Responsabile, commerciale, direzione e amministratore possono accettare un ordine con scostamenti indicando il motivo; la cronologia registra autore e data. Se una verifica successiva dà un esito diverso, la deroga decade e la cronologia lo segnala.
 
 **Esempio.** Offerta da 30.000 € (A 10.000, B 12.000, C 8.000), ordine da 18.000 € per A e C: conforme, parziale, residuo 12.000 € sulla riga B.
+
+## Righe lette dai documenti
+
+Quando un evento **ordine ricevuto**, **offerta inviata** od **offerta accettata** viene confermato e viene da una mail con allegati PDF o Word, o da un documento Drive, il documento si mette in coda per la lettura. La lettura avviene al giro di sincronizzazione successivo (`services/estrazioni.py`, `ingest/estrazione_righe.py`, `ingest/estrattore.py`).
+
+- **Una sola offerta per numero.** Le offerte si cercano per numero, senza badare a spazi e segni, in tutte le commesse: la stessa offerta letta dalla mail d'invio, dall'archivio Drive o dal protocollo è una sola offerta. Senza numero vale l'unica offerta della commessa. Gli eventi non creano revisioni: l'ultima diventa *inviata*, o *accettata* con un'offerta accettata. Se il documento indica una revisione ("rev. 2"), le righe vanno su quella revisione.
+- **Righe proposte.** Le righe lette sostituiscono la riga "Da dettagliare" e le altre righe proposte, mai quelle scritte o confermate. Se la destinazione ha già righe confermate, il documento non si legge. Le righe proposte contano nei totali e nella verifica; si confermano tutte insieme, oppure una per una salvandole.
+- **Testata.** Numero, offerta citata e condizioni si riempiono solo se sono vuoti. La data del documento sostituisce quella della mail per ordini e offerte creati da un evento; per quelli scritti a mano si usa solo se manca.
+- **Listino.** Una riga con un codice del listino si abbina all'articolo, tenendo descrizione e prezzo del documento. Una riga con un codice nuovo propone "Aggiungi al listino"; una con un codice o una descrizione già presenti propone "Abbina a…".
+- **Controlli.** Quantità × prezzo − sconto deve dare l'importo della riga (tolleranza 5 centesimi); la somma delle righe deve dare il totale del documento (tolleranza mezzo punto percentuale); ogni riga deve avere un prezzo. Le differenze compaiono come avvisi sulla lettura. Un documento che non è un ordine o un'offerta non viene applicato.
+- **Niente doppie letture.** Lo stesso file (stesso hash) arrivato da un'altra fonte non va a Claude; un file diverso della stessa offerta, quando le righe sono già lette, viene solo registrato come fonte in più.
+- **Eventi scartati.** Scartare o eliminare l'evento elimina l'ordine o l'offerta che aveva creato, se ha solo righe "Da dettagliare" o proposte; con righe confermate resta, staccato dall'evento.
+

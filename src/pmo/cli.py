@@ -189,6 +189,47 @@ def classifica(account: str | None = None, limite: int = 200) -> None:
     _stampa(esiti)
 
 
+@app.command("estrai-prova")
+def estrai_prova(
+    file: list[Path] = typer.Argument(..., help="PDF o Word di un ordine o di un'offerta"),
+    offerta: bool = typer.Option(False, "--offerta", help="Il documento è una nostra offerta (altrimenti un ordine del cliente)"),
+) -> None:
+    """Fa leggere a Claude le righe di uno o più documenti e stampa il risultato, senza scrivere nel database.
+
+    Serve a provare la lettura su documenti veri prima di lasciarla lavorare sulle caselle. Ogni lettura costa
+    qualche centesimo: il listino del database viene passato come contesto, come nel giro automatico."""
+    _logging()
+    from sqlalchemy import select as sa_select
+
+    from pmo.db.models import Articolo
+    from pmo.db.session import session_scope
+    from pmo.ingest.classifier import ErroreClassificazione
+    from pmo.ingest.estrattore import EstrattoreClaude
+    from pmo.ingest.estrazione_righe import MAX_ARTICOLI_CONTESTO, _da_byte
+    from pmo.services.estrazioni import avvisi_risultato, leggibile
+
+    settings = get_settings()
+    letti = []
+    for percorso in file:
+        mime = "application/pdf" if percorso.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if not leggibile(percorso.name, mime):
+            raise typer.BadParameter(f"{percorso.name}: servono PDF o Word (.docx)")
+        letti.append(_da_byte(percorso.name, mime, percorso.read_bytes()))
+    with session_scope() as session:
+        articoli = session.scalars(sa_select(Articolo).where(Articolo.attivo.is_(True)).order_by(Articolo.codice).limit(MAX_ARTICOLI_CONTESTO)).all()
+        contesto = "Listino di La Traccia (codice | descrizione | prezzo):\n" + "\n".join(
+            f"{a.codice} | {a.descrizione} | {a.prezzo_listino if a.prezzo_listino is not None else ''}" for a in articoli
+        ) if articoli else ""
+    estrattore = EstrattoreClaude(settings)
+    try:
+        risultato = estrattore.estrai("offerta" if offerta else "ordine", letti, contesto).model_dump()
+    except ErroreClassificazione as exc:
+        typer.echo(f"Lettura non riuscita: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    risultato["avvisi"] = [*avvisi_risultato(risultato), *risultato.get("avvisi", [])]
+    _stampa({"modello": estrattore.modello, "token": estrattore.uso.to_dict(), "risultato": risultato})
+
+
 @app.command()
 def regole() -> None:
     """Valuta le regole di sollecito su tutte le pratiche."""

@@ -26,6 +26,7 @@ from pmo.db.models import (
     Attesa,
     Avanzamento,
     Cliente,
+    Estrazione,
     Messaggio,
     Offerta,
     Ordine,
@@ -46,6 +47,7 @@ from pmo.permessi import (
     team_ids,
     vede_tutto,
 )
+from pmo.services import estrazioni as svc_estr
 from pmo.services import ordini as svc
 from pmo.services import pratiche as svc_pratiche
 from pmo.services.verifica_ordini import confronto, registra_deroga, revisione_di_riferimento, verifica_ordine
@@ -323,6 +325,8 @@ def offerta_dettaglio(request: Request, offerta_id: int, session: Db, rev: int =
         residui={r.id: svc.residuo_riga(r) for r in revisione.righe} if revisione else {},
         residuo=svc.residuo_revisione(revisione) if revisione else 0,
         ordini=ordini,
+        estrazioni=svc_estr.estrazioni_di(session, revisione) if revisione else [],
+        listino=svc_estr.proposte_listino(session, revisione.righe) if revisione else {},
         ordinabile=revisione is not None
         and revisione.stato in svc.REVISIONI_ORDINABILI
         and any(q is None or q > 0 for q in map(svc.quantita_da_ordinare, revisione.righe)),
@@ -519,6 +523,8 @@ def ordine_dettaglio(request: Request, ordine_id: int, session: Db, utente: User
         pratica=pratica,
         revisioni=revisioni,
         confronto=confronto(ordine),
+        estrazioni=svc_estr.estrazioni_di(session, ordine),
+        listino=svc_estr.proposte_listino(session, ordine.righe),
         messaggi=messaggi,
         collegati={m.id for m in ordine.messaggi},
         articoli=_articoli(session),
@@ -695,3 +701,91 @@ def ordine_messaggi(request: Request, ordine_id: int, session: Db, messaggio_ids
     flash(request, f"Mail dell'ordine aggiornate ({len(ordine.messaggi)}).")
     return redirect(f"/ordini/{ordine.id}")
 
+
+# --- righe lette dai documenti: conferma, listino, nuova lettura ------------------------------------------------
+
+
+def _contenitore(session: Session, tipo: str, contenitore_id: int, utente: User) -> Ordine | RevisioneOfferta:
+    return _ordine(session, contenitore_id, utente) if tipo == "ordini" else _revisione(session, contenitore_id, utente)
+
+
+def _dopo_righe(session: Session, contenitore: Ordine | RevisioneOfferta, utente: User) -> None:
+    """Righe cambiate: importi della commessa e verifiche degli ordini da rifare."""
+    pratica = contenitore.pratica if isinstance(contenitore, Ordine) else contenitore.offerta.pratica
+    svc.ricalcola_importi_commessa(session, pratica)
+    if isinstance(contenitore, Ordine):
+        verifica_ordine(session, contenitore, user_id=utente.id)
+        _riverifica(session, pratica, escludi=contenitore)
+    else:
+        _riverifica(session, pratica)
+
+
+def _torna(contenitore: Ordine | RevisioneOfferta):  # noqa: ANN202
+    return redirect(f"/ordini/{contenitore.id}") if isinstance(contenitore, Ordine) else _ritorno_revisione(contenitore)
+
+
+@router.post("/{tipo}/{contenitore_id}/righe/conferma", dependencies=[Depends(verifica_csrf)])
+def righe_conferma(request: Request, tipo: str, contenitore_id: int, session: Db, utente: User = Depends(gestione)):
+    """Le righe lette dal documento, controllate, diventano confermate."""
+    if tipo not in ("ordini", "revisioni"):
+        raise HTTPException(status_code=404)
+    contenitore = _contenitore(session, tipo, contenitore_id, utente)
+    n = svc_estr.conferma_righe(session, contenitore)
+    _dopo_righe(session, contenitore, utente)
+    flash(request, f"{n} righe confermate." if n != 1 else "1 riga confermata.")
+    return _torna(contenitore)
+
+
+@router.post("/{tipo}/{contenitore_id}/righe/{riga_id}/listino", dependencies=[Depends(verifica_csrf)])
+def riga_listino(
+    request: Request, tipo: str, contenitore_id: int, riga_id: int, session: Db, articolo_id: str = Form(""), utente: User = Depends(gestione)
+):
+    """Con `articolo_id` abbina la riga a quella voce del listino; senza, aggiunge la voce della riga al listino."""
+    if tipo not in ("ordini", "revisioni"):
+        raise HTTPException(status_code=404)
+    contenitore = _contenitore(session, tipo, contenitore_id, utente)
+    riga = next((r for r in contenitore.righe if r.id == riga_id), None)
+    if riga is None:
+        raise HTTPException(status_code=404, detail="Riga non trovata")
+    scelto = _intero_o(articolo_id, None)
+    if scelto is not None:
+        articolo = session.get(Articolo, scelto)
+        if articolo is None:
+            raise HTTPException(status_code=400, detail="Articolo non valido")
+        svc_estr.abbina_articolo(session, riga, articolo)
+        flash(request, f"Riga abbinata a {articolo.codice}.")
+    else:
+        try:
+            articolo = svc_estr.articolo_da_riga(session, riga)
+        except ValueError as exc:
+            flash(request, str(exc), "errore")
+            return _torna(contenitore)
+        flash(request, f"{articolo.codice} è nel listino e la riga è abbinata.")
+    _dopo_righe(session, contenitore, utente)
+    return _torna(contenitore)
+
+
+@router.post("/{tipo}/{contenitore_id}/listino", dependencies=[Depends(verifica_csrf)])
+def righe_al_listino(request: Request, tipo: str, contenitore_id: int, session: Db, utente: User = Depends(gestione)):
+    """Tutte le voci nuove delle righe nel listino (un codice già presente si abbina, non si duplica)."""
+    if tipo not in ("ordini", "revisioni"):
+        raise HTTPException(status_code=404)
+    contenitore = _contenitore(session, tipo, contenitore_id, utente)
+    n = svc_estr.voci_nuove_al_listino(session, contenitore)
+    _dopo_righe(session, contenitore, utente)
+    flash(request, f"{n} voci aggiunte al listino o abbinate." if n != 1 else "1 voce aggiunta al listino o abbinata.")
+    return _torna(contenitore)
+
+
+@router.post("/estrazioni/{estrazione_id}/riprova", dependencies=[Depends(verifica_csrf)])
+def estrazione_riprova(request: Request, estrazione_id: int, session: Db, utente: User = Depends(gestione)):
+    """Rimette in coda la lettura del documento: la rifà il prossimo giro di sincronizzazione."""
+    estrazione = session.get(Estrazione, estrazione_id)
+    if estrazione is None or not pratica_visibile(session, estrazione.pratica, utente):
+        raise HTTPException(status_code=404, detail="Lettura non trovata")
+    svc_estr.riprova(estrazione)
+    flash(request, "Il documento sarà riletto al prossimo giro di sincronizzazione.")
+    destinazione = estrazione.destinazione
+    if destinazione is None:
+        return redirect(f"/pratiche/{estrazione.pratica_id}#ordini")
+    return _torna(destinazione)

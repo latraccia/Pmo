@@ -17,7 +17,7 @@ def test_migrazione_crea_tutte_le_tabelle(tmp_path):
     finally:
         os.environ.pop("ALEMBIC_URL", None)
     tabelle = set(inspect(create_engine(url)).get_table_names())
-    attese = {"users", "accounts", "watched_folders", "clienti", "prodotti", "pratiche", "eventi", "messaggi", "documenti", "regole", "solleciti", "sequenze_codici", "sync_runs", "impostazioni", "teams", "team_membri", "contatti_cliente", "articoli", "offerte", "revisioni_offerta", "righe_offerta", "ordini", "righe_ordine", "allocazioni_righe", "ordini_messaggi"}
+    attese = {"users", "accounts", "watched_folders", "clienti", "prodotti", "pratiche", "eventi", "messaggi", "documenti", "regole", "solleciti", "sequenze_codici", "sync_runs", "impostazioni", "teams", "team_membri", "contatti_cliente", "articoli", "offerte", "revisioni_offerta", "righe_offerta", "ordini", "righe_ordine", "allocazioni_righe", "ordini_messaggi", "estrazioni"}
     assert attese <= tabelle
 
 

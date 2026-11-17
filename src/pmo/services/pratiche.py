@@ -30,6 +30,7 @@ from pmo.db.models import (
     TipoFonte,
     User,
 )
+from pmo.services import estrazioni as estrazioni_svc
 from pmo.services import ordini as ordini_svc
 from pmo.services.codici import prossimo_codice
 
@@ -242,9 +243,16 @@ def _aggiorna_importi_e_riferimenti(session: Session, pratica: Pratica, evento: 
         ):
             pratica.data_scadenza = evento.scadenza
     if evento.tipo == TipoEvento.ORDINE_RICEVUTO:
-        # L'ordine diventa un ordine con le sue righe (una "Da dettagliare" finché non si scrivono): l'importo
-        # ordinato della commessa è la somma degli ordini. Rileggere lo stesso ordine non lo duplica.
-        ordini_svc.ordine_da_evento(session, pratica, evento)
+        # L'ordine diventa un ordine con le sue righe (una "Da dettagliare" finché non si leggono o scrivono):
+        # l'importo ordinato della commessa è la somma degli ordini. Rileggere lo stesso ordine non lo duplica.
+        ordine = ordini_svc.ordine_da_evento(session, pratica, evento)
+        estrazioni_svc.accoda_da_evento(session, evento, ordine=ordine)
+    elif evento.tipo in (TipoEvento.OFFERTA_INVIATA, TipoEvento.OFFERTA_ACCETTATA):
+        # Anche l'offerta diventa un'offerta con le sue righe: una sola per numero, da qualunque fonte arrivi.
+        revisione, avviso = ordini_svc.offerta_da_evento(session, pratica, evento)
+        if avviso:
+            evento.dati = {**(evento.dati or {}), "avviso": avviso}
+        estrazioni_svc.accoda_da_evento(session, evento, revisione=revisione)
     riferimenti = (evento.dati or {}).get("riferimenti") or {}
     if riferimenti:
         nuovi = dict(pratica.riferimenti or {})
@@ -392,13 +400,11 @@ def conferma_evento(session: Session, evento: Evento, user_id: int | None = None
 
 
 def rifiuta_evento(session: Session, evento: Evento, user_id: int | None = None) -> str | None:
-    """Scarta un evento. Se era un "ordine ricevuto" già applicato, l'ordine che aveva creato segue l'evento
-    (vedi ordini.evento_rimosso); restituisce la frase che lo dice, se c'è."""
+    """Scarta un evento. Se era un "ordine ricevuto" o un'offerta già applicati, l'ordine o l'offerta che aveva creato
+    segue l'evento (vedi ordini.evento_rimosso); restituisce la frase che lo dice, se c'è."""
     evento.stato_verifica = StatoVerifica.RIFIUTATO
     evento.dati = {**(evento.dati or {}), "rifiutato_da": user_id}
-    if evento.tipo == TipoEvento.ORDINE_RICEVUTO:
-        return ordini_svc.evento_rimosso(session, evento)
-    return None
+    return ordini_svc.evento_rimosso(session, evento)
 
 
 def conferma_pratica(session: Session, pratica: Pratica, user_id: int | None = None, soglia: float = 0.0) -> None:

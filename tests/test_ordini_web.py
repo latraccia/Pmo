@@ -258,3 +258,68 @@ def test_crea_ordine_dall_offerta(client, scenario, db):
     assert "Crea l'ordine da questa revisione" not in client.get(f"/offerte/{scenario['offerta'].id}").text
     r = client.post(f"/revisioni/{revisione.id}/ordine", data={"csrf_token": csrf, "numero": "4500-10"}, follow_redirects=True)
     assert "già ordinate" in r.text
+
+
+def _ordine_con_righe_lette(db, pratica, stato="fatta"):
+    """Un ordine con tre righe lette da un documento (una con un codice fuori listino)."""
+    from pmo.db.models import Estrazione
+    from pmo.services import estrazioni as svc_estr
+
+    ordine = svc_ordini.crea_ordine(db, pratica, numero="LETTO-1", riferimento_offerta="OFF-1")
+    estrazione = Estrazione(pratica_id=pratica.id, fonte="mail", ordine_id=ordine.id)
+    db.add(estrazione)
+    db.flush()
+    svc_estr.applica_risultato(db, estrazione, {
+        "tipo": "ordine", "righe": [
+            {"codice": "", "descrizione": "Modulo A", "quantita": 1, "prezzo_unitario": 10000},
+            {"codice": "", "descrizione": "Modulo C", "quantita": 1, "prezzo_unitario": 8000},
+            {"codice": "NUOVO-1", "descrizione": "Voce nuova", "quantita": 1, "prezzo_unitario": 50},
+        ],
+    })
+    if stato == "errore":
+        estrazione.stato, estrazione.errore = "errore", "PDF illeggibile"
+    db.commit()
+    return ordine, estrazione
+
+
+def test_righe_lette_conferma_e_listino(client, scenario, db):
+    from pmo.db.models import Articolo
+
+    ordine, estrazione = _ordine_con_righe_lette(db, scenario["pa"])
+    csrf = _login(client, "op@latraccia.it")
+    pagina = client.get(f"/ordini/{ordine.id}").text
+    assert "Righe <em>lette</em> dal documento" in pagina and "Riga letta dal documento, da controllare" in pagina
+    assert "Conferma le righe" not in pagina  # l'operativo vede ma non conferma
+    assert client.post(f"/ordini/{ordine.id}/righe/conferma", data={"csrf_token": csrf}).status_code == 403
+    nuova = ordine.righe[2]
+    assert client.post(f"/ordini/{ordine.id}/righe/{nuova.id}/listino", data={"csrf_token": csrf}).status_code == 403
+
+    csrf = _login(client, "comm@latraccia.it")
+    pagina = client.get(f"/ordini/{ordine.id}").text
+    assert "Conferma le righe (3)" in pagina and "Aggiungi al listino le voci nuove (1)" in pagina and ">Aggiungi al listino<" in pagina
+    r = client.post(f"/ordini/{ordine.id}/righe/{nuova.id}/listino", data={"csrf_token": csrf})
+    assert r.status_code == 303
+    db.expire_all()
+    assert db.query(Articolo).filter(Articolo.codice == "NUOVO-1").one().id == db.get(type(nuova), nuova.id).articolo_id
+    r = client.post(f"/ordini/{ordine.id}/righe/conferma", data={"csrf_token": csrf}, follow_redirects=True)
+    assert "3 righe confermate" in r.text
+    db.expire_all()
+    ordine = db.get(Ordine, ordine.id)
+    assert all(not x.proposta for x in ordine.righe) and ordine.conformita == "scostamenti"  # NUOVO-1 non è nell'offerta
+    assert "Conferma le righe" not in client.get(f"/ordini/{ordine.id}").text
+
+
+def test_letture_non_riuscite_e_rileggi(client, scenario, db):
+    _, estrazione = _ordine_con_righe_lette(db, scenario["pa"], stato="errore")
+    csrf = _login(client, "comm@latraccia.it")
+    pagina = client.get("/revisione?scheda=letture").text
+    assert "PDF illeggibile" in pagina and "Rileggi" in pagina
+    r = client.post(f"/estrazioni/{estrazione.id}/riprova", data={"csrf_token": csrf})
+    assert r.status_code == 303
+    db.expire_all()
+    assert db.get(type(estrazione), estrazione.id).stato == "in_attesa"
+    # un utente di un altro team non la vede
+    db.add(User(email="beta@latraccia.it", nome="Beta", ruolo="commerciale", teams=[db.query(Team).filter(Team.nome == "Beta").one()]))
+    db.commit()
+    csrf = _login(client, "beta@latraccia.it")
+    assert client.post(f"/estrazioni/{estrazione.id}/riprova", data={"csrf_token": csrf}).status_code == 404

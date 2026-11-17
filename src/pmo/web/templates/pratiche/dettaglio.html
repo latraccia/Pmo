@@ -301,7 +301,7 @@
       {% for o in pratica.offerte %}
         {%- set r = o.revisione_accettata or o.ultima_revisione -%}
         <tr>
-          <td><a class="pmo-title-cell" href="/offerte/{{ o.id }}">{{ o.nome }}</a>{% if o.titolo and o.numero %}<p class="pmo-dato">{{ o.titolo }}</p>{% endif %}</td>
+          <td><a class="pmo-title-cell" href="/offerte/{{ o.id }}">{{ o.nome }}</a>{% if o.titolo and o.numero %}<p class="pmo-dato">{{ o.titolo }}</p>{% endif %}{% if r and r.righe | selectattr("proposta") | list %} {{ da_confermare("Righe da controllare") }}{% endif %}</td>
           <td>{{ o.cliente.nome if o.cliente else '-' }}</td>
           <td>{{ ('rev. ' ~ r.numero_revisione) if r else '-' }}</td>
           <td>{{ r.etichetta_stato if r else '-' }}</td>
@@ -335,7 +335,7 @@
       <tbody>
       {% for o in pratica.ordini %}
         <tr>
-          <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} {{ da_confermare() }}{% endif %}</td>
+          <td><a class="pmo-title-cell" href="/ordini/{{ o.id }}">{{ o.nome }}</a><p class="pmo-dato">{{ o.data_ordine | data }}</p>{% if o.stato_verifica == 'proposto' %} {{ da_confermare() }}{% elif o.righe | selectattr("proposta") | list %} {{ da_confermare("Righe da controllare") }}{% endif %}</td>
           <td class="pmo-num">{{ o.totale | euro }}</td>
           <td>{{ conformita(o) }}</td>
           <td class="pmo-num">{{ (o.esito_verifica or {}).get('residuo') | euro if (o.esito_verifica or {}).get('residuo') else '-' }}</td>

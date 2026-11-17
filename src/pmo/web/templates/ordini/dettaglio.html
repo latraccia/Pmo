@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_ds.html" import eyebrow, campo, area, selezione, spunta, csrf, conformita with context %}
 {% from "ordini/_righe.html" import tabella_righe with context %}
+{% from "ordini/_estrazione.html" import riquadro_estrazione with context %}
 {% block titolo %}{{ ordine.nome }} · {{ pratica.codice }} · {{ app_name }}{% endblock %}
 {% block contenuto %}
 {%- set modificabile = puo(utente, 'gestire_ordini') -%}
@@ -85,12 +86,14 @@
 </section>
 
 {#- ---- Righe ---- -#}
+{{ riquadro_estrazione(estrazioni, "/ordini/" ~ ordine.id, modificabile=modificabile, proposte=ordine.righe | selectattr("proposta") | list | length, nuove=listino.values() | selectattr("nuovo") | list | length) }}
+
 <section class="tr-card pmo-section" aria-labelledby="t-righe">
   <div class="tr-card__head">
     <h2 class="tr-card__title" id="t-righe">Le <em>righe</em></h2>
     <span class="tr-card__aside">importi netti, IVA esclusa</span>
   </div>
-  {{ tabella_righe(ordine.righe, "/ordini/" ~ ordine.id, modificabile=modificabile, per_riga=confronto.per_riga, totale=ordine.totale, vuoto="Nessuna riga", articoli=articoli) }}
+  {{ tabella_righe(ordine.righe, "/ordini/" ~ ordine.id, modificabile=modificabile, per_riga=confronto.per_riga, totale=ordine.totale, vuoto="Nessuna riga", articoli=articoli, listino=listino) }}
 </section>
 
 {#- ---- Confronto con l'offerta ---- -#}

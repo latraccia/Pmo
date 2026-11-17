@@ -32,6 +32,7 @@ from pmo.db.models import (
     RigaOrdine,
     StatoRevisione,
     StatoVerifica,
+    TipoEvento,
 )
 
 DA_DETTAGLIARE = "Da dettagliare"
@@ -120,6 +121,76 @@ def imposta_stato_revisione(session: Session, revisione: RevisioneOfferta, stato
 
 def revisioni_accettate(pratica: Pratica) -> list[RevisioneOfferta]:
     return [r for o in pratica.offerte for r in o.revisioni if r.stato == StatoRevisione.ACCETTATA]
+
+
+def offerta_con_numero(session: Session, numero: str, *, pratica_id: int | None = None) -> Offerta | None:
+    """L'offerta con lo stesso numero (senza badare a spazi e segni). Senza `pratica_id` la cerca in tutte le
+    commesse: un numero d'offerta non si ripete in azienda, e la stessa offerta arriva da mail, Drive e protocollo."""
+    cercato = normalizza_numero(numero)
+    if not cercato:
+        return None
+    query = select(Offerta).where(Offerta.numero != "").order_by(Offerta.id)
+    if pratica_id is not None:
+        query = query.where(Offerta.pratica_id == pratica_id)
+    return next((o for o in session.scalars(query) if normalizza_numero(o.numero) == cercato), None)
+
+
+def offerta_da_evento(session: Session, pratica: Pratica, evento: Evento) -> tuple[RevisioneOfferta, str | None]:
+    """La revisione d'offerta che corrisponde a un evento "offerta inviata/accettata" confermato.
+
+    Una sola offerta per numero, in tutta l'azienda: la stessa offerta letta dalla mail d'invio, dall'archivio
+    Drive o dal protocollo diventa una sola offerta con più fonti. Senza numero vale l'offerta già creata da
+    questo evento, o l'unica offerta della commessa. Restituisce la revisione e, se l'offerta stava in un'altra
+    commessa, la frase che lo dice.
+
+    Gli eventi non creano nuove revisioni (lo stesso documento arriva più volte): l'ultima diventa "inviata",
+    oppure "accettata" con un'offerta accettata; una revisione già accettata resta com'è."""
+    riferimenti = (evento.dati or {}).get("riferimenti") or {}
+    numero = str(riferimenti.get("numero_offerta") or "").strip()
+    avviso = None
+    offerta = session.scalar(select(Offerta).where(Offerta.evento_id == evento.id))
+    if offerta is None and numero:
+        offerta = offerta_con_numero(session, numero)
+        if offerta is not None and offerta.pratica_id != pratica.id:
+            avviso = f"L'offerta {offerta.nome} è già nella commessa {offerta.pratica.codice}: le righe vanno lì."
+    if offerta is None and not numero:
+        offerte = list(pratica.offerte)
+        offerta = offerte[0] if len(offerte) == 1 else None
+    if offerta is None:
+        offerta = crea_offerta(
+            session, pratica, numero=numero, titolo=evento.titolo or "",
+            data=evento.data_evento.date() if evento.data_evento else None,
+            note=f"Creata dall'evento \"{evento.titolo}\".",
+        )
+        offerta.evento_id = evento.id
+    elif numero and not offerta.numero:
+        offerta.numero = numero[:80]
+    revisione = offerta.ultima_revisione or nuova_revisione(session, offerta)
+    if revisione.messaggio_id is None and evento.messaggio_id:
+        revisione.messaggio_id = evento.messaggio_id
+    if revisione.documento_id is None and evento.documento_id:
+        revisione.documento_id = evento.documento_id
+    if revisione.data is None and evento.data_evento:
+        revisione.data = evento.data_evento.date()
+    # Come per gli ordini: finché nessuno legge le righe, l'importo dell'evento sta su una riga "Da dettagliare",
+    # così l'offerta accettata non porta a zero l'importo offerto della commessa.
+    if evento.importo is not None and not revisione.righe:
+        revisione.righe.append(RigaOfferta(posizione=1, descrizione=DA_DETTAGLIARE, quantita=Decimal(1), prezzo_unitario=evento.importo))
+    elif evento.importo is not None and len(revisione.righe) == 1 and revisione.righe[0].descrizione == DA_DETTAGLIARE:
+        revisione.righe[0].prezzo_unitario = evento.importo
+    session.flush()
+    if evento.tipo == TipoEvento.OFFERTA_ACCETTATA and revisione.stato != StatoRevisione.ACCETTATA:
+        imposta_stato_revisione(session, revisione, StatoRevisione.ACCETTATA)
+    elif revisione.stato == StatoRevisione.BOZZA:
+        imposta_stato_revisione(session, revisione, StatoRevisione.INVIATA)
+    else:
+        ricalcola_importi_commessa(session, offerta.pratica)
+    return revisione, avviso
+
+
+def _intatto(righe) -> bool:  # noqa: ANN001
+    """Nessuno ci ha lavorato: solo la riga "Da dettagliare" o righe lette dai documenti e non ancora confermate."""
+    return all((r.descrizione == DA_DETTAGLIARE and r.articolo_id is None) or r.stato_verifica == StatoVerifica.PROPOSTO for r in righe)
 
 
 # --- ordini ----------------------------------------------------------------------------------------
@@ -316,26 +387,35 @@ def ordine_da_evento(session: Session, pratica: Pratica, evento: Evento) -> Ordi
 
 
 def evento_rimosso(session: Session, evento: Evento) -> str | None:
-    """L'evento "ordine ricevuto" viene eliminato o scartato: l'ordine che aveva creato se ne va con lui, se nessuno
-    ci ha ancora lavorato (solo la riga "Da dettagliare"); altrimenti resta, staccato dall'evento. Restituisce una
-    frase per l'utente, oppure None se l'evento non aveva creato ordini."""
+    """L'evento "ordine ricevuto" od "offerta" viene eliminato o scartato: l'ordine o l'offerta che aveva creato se
+    ne va con lui, se nessuno ci ha ancora lavorato (solo la riga "Da dettagliare" o righe lette dai documenti e non
+    confermate); altrimenti resta, staccato dall'evento. Restituisce una frase per l'utente, oppure None se l'evento
+    non aveva creato niente."""
     ordini = session.scalars(select(Ordine).where(Ordine.evento_id == evento.id)).all()
-    if not ordini:
+    offerte = session.scalars(select(Offerta).where(Offerta.evento_id == evento.id)).all()
+    if not ordini and not offerte:
         return None
-    pratica = ordini[0].pratica
+    pratiche = {o.pratica for o in [*ordini, *offerte]}
     frasi = []
     for ordine in ordini:
-        intatto = all(r.descrizione == DA_DETTAGLIARE and r.articolo_id is None for r in ordine.righe)
-        if intatto:
+        if _intatto(ordine.righe):
             frasi.append(f"eliminato anche {ordine.nome}, creato da questo evento")
             session.delete(ordine)
         else:
             ordine.evento_id = None
             if ordine.chiave == f"evento:{evento.id}":
                 ordine.chiave = None
-            frasi.append(f"{ordine.nome} resta perché ha righe scritte a mano: eliminalo dalla sua pagina se non serve")
+            frasi.append(f"{ordine.nome} resta perché ha righe confermate: eliminalo dalla sua pagina se non serve")
+    for offerta in offerte:
+        if all(_intatto(r.righe) for r in offerta.revisioni):
+            frasi.append(f"eliminata anche l'offerta {offerta.nome}, creata da questo evento")
+            session.delete(offerta)
+        else:
+            offerta.evento_id = None
+            frasi.append(f"l'offerta {offerta.nome} resta perché ha righe confermate")
     session.flush()
-    ricalcola_importi_commessa(session, pratica, azzera_ordine=True)
+    for pratica in pratiche:
+        ricalcola_importi_commessa(session, pratica, azzera_ordine=bool(ordini), azzera_offerta=bool(offerte))
     return "; ".join(frasi).capitalize() + "."
 
 

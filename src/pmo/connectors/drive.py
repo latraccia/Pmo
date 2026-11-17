@@ -151,6 +151,19 @@ class DriveClient:
                     continue
                 yield _to_file(raw, percorso)
 
+    def scarica(self, file_id: str, mime_type: str = "") -> bytes:
+        """Il contenuto del file. I documenti Google si esportano in PDF. Gli errori di Drive passano al chiamante."""
+        if mime_type.startswith("application/vnd.google-apps."):
+            data = self.service.files().export(fileId=file_id, mimeType="application/pdf").execute()
+            return data if isinstance(data, bytes) else (data or "").encode()
+        buf = io.BytesIO()
+        request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        downloader = MediaIoBaseDownload(buf, request, chunksize=4 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buf.getvalue()
+
     def estratto_testo(self, file: FileDrive, max_chars: int = 4000, max_bytes: int = 8_000_000) -> str:
         """Estratto testuale del file (export per i formati Google, download per PDF/Office/testo)."""
         try:
@@ -163,13 +176,7 @@ class DriveClient:
                 return ""
             if not _estraibile(file.mime_type, file.nome):
                 return ""
-            buf = io.BytesIO()
-            request = self.service.files().get_media(fileId=file.id, supportsAllDrives=True)
-            downloader = MediaIoBaseDownload(buf, request, chunksize=4 * 1024 * 1024)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-            return estrai_testo(buf.getvalue(), file.mime_type, file.nome, max_chars)
+            return estrai_testo(self.scarica(file.id), file.mime_type, file.nome, max_chars)
         except HttpError as exc:
             log.warning("Estratto non disponibile per %s: %s", file.nome, exc)
             return ""

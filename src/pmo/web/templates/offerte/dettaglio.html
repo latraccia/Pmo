@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_ds.html" import eyebrow, campo, area, selezione, csrf, conformita with context %}
 {% from "ordini/_righe.html" import tabella_righe with context %}
+{% from "ordini/_estrazione.html" import riquadro_estrazione with context %}
 {% block titolo %}{{ offerta.nome }} · {{ pratica.codice }} · {{ app_name }}{% endblock %}
 {% block contenuto %}
 {%- set modificabile = puo(utente, 'gestire_ordini') -%}
@@ -63,12 +64,14 @@
   {% endif %}
 </section>
 
+{{ riquadro_estrazione(estrazioni, "/revisioni/" ~ revisione.id, modificabile=modificabile, proposte=revisione.righe | selectattr("proposta") | list | length, nuove=listino.values() | selectattr("nuovo") | list | length) }}
+
 <section class="tr-card pmo-section" aria-labelledby="t-righe-offerta">
   <div class="tr-card__head">
     <h2 class="tr-card__title" id="t-righe-offerta">Le <em>righe</em></h2>
     <span class="tr-card__aside">importi netti, IVA esclusa</span>
   </div>
-  {{ tabella_righe(revisione.righe, "/revisioni/" ~ revisione.id, modificabile=modificabile, totale=revisione.totale, vuoto="Nessuna riga", articoli=articoli) }}
+  {{ tabella_righe(revisione.righe, "/revisioni/" ~ revisione.id, modificabile=modificabile, totale=revisione.totale, vuoto="Nessuna riga", articoli=articoli, listino=listino) }}
   {% if revisione.stato == 'accettata' and revisione.righe %}
   <div class="tr-datatable pmo-mt-5">
     {% for r in revisione.righe %}

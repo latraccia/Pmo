@@ -6,14 +6,24 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from pmo.db.models import Documento, Evento, Messaggio, Pratica, StatoMessaggio, StatoVerifica, User
+from pmo.db.models import (
+    Documento,
+    Estrazione,
+    Evento,
+    Messaggio,
+    Pratica,
+    StatoEstrazione,
+    StatoMessaggio,
+    StatoVerifica,
+    User,
+)
 from pmo.permessi import filtra_elementi, filtra_pratiche
 from pmo.web.deps import get_db, pagina_per, render, utente_corrente
 
 router = APIRouter()
 
 
-PER_PAGINA = {"pratiche": 24, "messaggi": 20, "documenti": 24, "errori": 30}
+PER_PAGINA = {"pratiche": 24, "messaggi": 20, "documenti": 24, "letture": 30, "errori": 30}
 
 
 @router.get("/revisione")
@@ -24,12 +34,15 @@ def revisione(request: Request, scheda: str = "pratiche", session: Session = Dep
         "pratiche": (Pratica, Pratica.stato_verifica == StatoVerifica.PROPOSTO.value),
         "messaggi": (Messaggio, Messaggio.stato == StatoMessaggio.DA_RIVEDERE.value),
         "documenti": (Documento, Documento.stato == StatoMessaggio.DA_RIVEDERE.value),
+        "letture": (Estrazione, Estrazione.stato == StatoEstrazione.ERRORE.value),
         "errori": (Messaggio, Messaggio.stato == StatoMessaggio.ERRORE.value),
     }
     def base(chiave: str, *colonne):  # noqa: ANN002, ANN202
         """La select di una scheda, ristretta a ciò che l'utente può vedere."""
         modello, condizione = filtri[chiave]
         query = select(*colonne).where(condizione)
+        if modello is Estrazione:  # le letture si vedono se si vede la loro commessa
+            return filtra_pratiche(query.join(Pratica, Estrazione.pratica_id == Pratica.id), utente)
         return filtra_pratiche(query, utente) if modello is Pratica else filtra_elementi(query, utente, modello)
 
     conteggi = {k: session.scalar(base(k, func.count(m.id))) or 0 for k, (m, _) in filtri.items()}
@@ -39,6 +52,7 @@ def revisione(request: Request, scheda: str = "pratiche", session: Session = Dep
     messaggi: list = []
     documenti: list = []
     errori: list = []
+    letture: list = []
     if scheda == "pratiche":
         pratiche = session.scalars(
             base("pratiche", Pratica)
@@ -60,6 +74,14 @@ def revisione(request: Request, scheda: str = "pratiche", session: Session = Dep
             base("documenti", Documento)
             .options(selectinload(Documento.pratica))
             .order_by(Documento.modified_time.desc())
+            .offset(pagina.offset)
+            .limit(pagina.per_pagina)
+        ).all()
+    elif scheda == "letture":
+        letture = session.scalars(
+            base("letture", Estrazione)
+            .options(selectinload(Estrazione.pratica))
+            .order_by(Estrazione.elaborata_at.desc())
             .offset(pagina.offset)
             .limit(pagina.per_pagina)
         ).all()
@@ -85,6 +107,7 @@ def revisione(request: Request, scheda: str = "pratiche", session: Session = Dep
         messaggi=messaggi,
         documenti=documenti,
         errori=errori,
+        letture=letture,
         eventi_per_messaggio=eventi_per_messaggio,
         pratiche_aperte=pratiche_aperte,
     )

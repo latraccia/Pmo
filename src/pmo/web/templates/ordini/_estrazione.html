@@ -1,0 +1,46 @@
+{#- Riquadro "Righe lette dal documento" di un ordine o di una revisione d'offerta.
+
+    Mostra le letture fatte da Claude (da mail, Drive, protocollo): il file, lo stato, gli avvisi sui numeri; con
+    righe ancora proposte offre la conferma, con voci fuori listino l'aggiunta al listino. `base` e' /ordini/{id}
+    oppure /revisioni/{id}. -#}
+{% from "_ds.html" import csrf with context %}
+
+{%- macro fonte(e) -%}
+{%- if e.fonte == 'mail' and e.messaggio -%}<a href="{{ e.messaggio.gmail_url }}" target="_blank" rel="noopener">mail del {{ e.messaggio.data | data }}</a>
+{%- elif e.fonte == 'drive' and e.documento -%}{% if e.documento.web_view_link %}<a href="{{ e.documento.web_view_link }}" target="_blank" rel="noopener">Drive</a>{% else %}Drive{% endif %}
+{%- elif e.fonte == 'protocollo' -%}protocollo {{ e.riferimento_esterno }}
+{%- else -%}{{ e.fonte }}{%- endif -%}
+{%- endmacro -%}
+
+{%- macro riquadro_estrazione(estrazioni, base, modificabile=false, proposte=0, nuove=0) -%}
+{% if estrazioni or proposte %}
+<section class="tr-card pmo-section" aria-labelledby="t-estrazione">
+  <div class="tr-card__head">
+    <h2 class="tr-card__title" id="t-estrazione">Righe <em>lette</em> dal documento</h2>
+    <span class="tr-card__aside">{% if proposte %}{{ proposte }} da controllare{% else %}lette da Claude{% endif %}</span>
+  </div>
+  <ul class="pmo-list">
+  {% for e in estrazioni %}
+    <li>
+      <span class="tr-chip">{{ e.etichetta_stato }}</span>
+      <strong>{{ e.nome_file or 'Documento' }}</strong> · {{ fonte(e) }}{% if e.elaborata_at %} · {{ e.elaborata_at | data }}{% endif %}{% if e.modello %} <span class="pmo-meta">{{ e.modello }}</span>{% endif %}
+      {% if e.stato == 'errore' %}<p class="pmo-riga__avviso">{{ e.errore }}</p>{% endif %}
+      {% for a in e.avvisi %}<p class="pmo-riga__avviso">{{ a }}</p>{% endfor %}
+      {% if modificabile and e.stato in ('errore', 'saltata') %}
+      <form method="post" action="/estrazioni/{{ e.id }}/riprova" class="pmo-inline">{{ csrf() }}<button class="tr-btn tr-btn--quiet tr-btn--sm" type="submit">Rileggi</button></form>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% if proposte %}
+  <p class="pmo-small pmo-mt-5">Le righe proposte sono quelle lette dal documento: controllale con il PDF, correggi quello che serve (salvare una riga la conferma) e poi conferma le altre. Gli importi le contano già.</p>
+  {% endif %}
+  {% if modificabile and (proposte or nuove) %}
+  <div class="tr-card__foot tr-btn-group">
+    {% if nuove %}<form method="post" action="{{ base }}/listino">{{ csrf() }}<button class="tr-btn tr-btn--quiet" type="submit"><span class="tr-icon tr-icon--plus" aria-hidden="true"></span><span>Aggiungi al listino le voci nuove ({{ nuove }})</span></button></form>{% endif %}
+    {% if proposte %}<form method="post" action="{{ base }}/righe/conferma">{{ csrf() }}<button class="tr-btn tr-btn--secondary" type="submit"><span class="tr-icon tr-icon--check" aria-hidden="true"></span><span>Conferma le righe ({{ proposte }})</span></button></form>{% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{%- endmacro -%}

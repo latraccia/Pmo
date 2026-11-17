@@ -14,6 +14,7 @@ from pmo.db.session import session_scope
 from pmo.ingest.catalogo import carica_catalogo
 from pmo.ingest.classifier import crea_classificatore
 from pmo.ingest.drive_sync import classifica_documenti, sincronizza_drive
+from pmo.ingest.estrazione_righe import elabora_estrazioni
 from pmo.ingest.gmail_sync import classifica_messaggi, sincronizza_gmail
 from pmo.rules.engine import esegui_regole
 
@@ -62,6 +63,10 @@ def sincronizza_account(
                 esito["classificazione_mail"] = {"stato": run.stato, **run.contatori, "errori": run.errori[:5]}
                 run = classifica_documenti(session, account, settings, classificatore=classificatore, catalogo=catalogo)
                 esito["classificazione_drive"] = {"stato": run.stato, **run.contatori, "errori": run.errori[:5]}
+                # Le righe di ordini e offerte confermati, lette dai loro documenti.
+                run = elabora_estrazioni(session, account, settings)
+                if run is not None:
+                    esito["estrazione"] = {"stato": run.stato, **run.contatori, "errori": run.errori[:5]}
     finally:
         with _lock_globale:
             _in_corso.pop(account_id, None)

@@ -650,6 +650,12 @@ class _CampiRiga:
     sconto_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     aliquota_iva: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     stato_verifica: Mapped[str] = mapped_column(String(16), default=StatoVerifica.CONFERMATO)
+    # La riga è stata letta da un documento (estrazione con Claude): resta "proposto" finché non si conferma.
+    estrazione_id: Mapped[int | None] = mapped_column(ForeignKey("estrazioni.id", ondelete="SET NULL"))
+
+    @property
+    def proposta(self) -> bool:
+        return self.stato_verifica == StatoVerifica.PROPOSTO
 
     @property
     def importo(self) -> Decimal | None:
@@ -681,6 +687,8 @@ class Offerta(Base):
     numero: Mapped[str] = mapped_column(String(80), default="")
     titolo: Mapped[str] = mapped_column(String(300), default="")
     note: Mapped[str] = mapped_column(Text, default="")
+    # L'evento (offerta inviata o accettata, da mail o da documento) che l'ha creata, se non è stata scritta a mano.
+    evento_id: Mapped[int | None] = mapped_column(ForeignKey("eventi.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
 
@@ -854,6 +862,76 @@ class AllocazioneRiga(Base):
 
     riga_offerta: Mapped[RigaOfferta] = relationship(back_populates="allocazioni")
     riga_ordine: Mapped[RigaOrdine] = relationship(back_populates="allocazioni")
+
+
+class FonteEstrazione(enum.StrEnum):
+    MAIL = "mail"
+    DRIVE = "drive"
+    PROTOCOLLO = "protocollo"  # il programma di protocollo, via API: fonte prevista, connettore da fare
+
+
+class StatoEstrazione(enum.StrEnum):
+    IN_ATTESA = "in_attesa"
+    FATTA = "fatta"
+    SALTATA = "saltata"  # file già letto, documento che non è un ordine/offerta, righe già presenti
+    ERRORE = "errore"
+
+
+ETICHETTE_ESTRAZIONE = {
+    StatoEstrazione.IN_ATTESA: "In attesa",
+    StatoEstrazione.FATTA: "Righe estratte",
+    StatoEstrazione.SALTATA: "Non riletta",
+    StatoEstrazione.ERRORE: "Errore",
+}
+
+
+class Estrazione(Base):
+    """La lettura delle righe di un ordine o di una revisione d'offerta da un documento (allegato di una mail, file
+    su Drive, in futuro protocollo), fatta da Claude. È insieme la coda del lavoro e il registro di cosa è stato
+    letto: gli hash dei file evitano di rileggere lo stesso documento arrivato da più fonti."""
+
+    __tablename__ = "estrazioni"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pratica_id: Mapped[int] = mapped_column(ForeignKey("pratiche.id", ondelete="CASCADE"), index=True)
+    fonte: Mapped[str] = mapped_column(String(16))
+    messaggio_id: Mapped[int | None] = mapped_column(ForeignKey("messaggi.id", ondelete="SET NULL"), index=True)
+    documento_id: Mapped[int | None] = mapped_column(ForeignKey("documenti.id", ondelete="SET NULL"), index=True)
+    riferimento_esterno: Mapped[str] = mapped_column(String(300), default="")
+    ordine_id: Mapped[int | None] = mapped_column(ForeignKey("ordini.id", ondelete="CASCADE"), index=True)
+    revisione_offerta_id: Mapped[int | None] = mapped_column(ForeignKey("revisioni_offerta.id", ondelete="CASCADE"), index=True)
+    stato: Mapped[str] = mapped_column(String(16), default=StatoEstrazione.IN_ATTESA, index=True)
+    tentativi: Mapped[int] = mapped_column(Integer, default=0)
+    errore: Mapped[str] = mapped_column(Text, default="")
+    file: Mapped[list] = mapped_column(JSONType, default=list)  # [{nome, mime, sha256, byte}]
+    risultato: Mapped[dict] = mapped_column(JSONType, default=dict)  # testata, righe, avvisi
+    modello: Mapped[str] = mapped_column(String(80), default="")
+    token: Mapped[dict] = mapped_column(JSONType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, default=utcnow)
+    elaborata_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+    pratica: Mapped[Pratica] = relationship()
+    messaggio: Mapped[Messaggio | None] = relationship()
+    documento: Mapped[Documento | None] = relationship()
+    ordine: Mapped[Ordine | None] = relationship()
+    revisione_offerta: Mapped[RevisioneOfferta | None] = relationship()
+
+    @property
+    def destinazione(self) -> Ordine | RevisioneOfferta | None:
+        return self.ordine or self.revisione_offerta
+
+    @property
+    def etichetta_stato(self) -> str:
+        return ETICHETTE_ESTRAZIONE.get(self.stato, self.stato)
+
+    @property
+    def avvisi(self) -> list[str]:
+        return list((self.risultato or {}).get("avvisi") or [])
+
+    @property
+    def nome_file(self) -> str:
+        nomi = [f.get("nome", "") for f in self.file or [] if f.get("usato", True)]
+        return ", ".join(n for n in nomi if n) or (self.documento.nome if self.documento else "")
 
 
 # ---------------------------------------------------------------------------------------------

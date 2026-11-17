@@ -479,7 +479,7 @@ def evento_azione(request: Request, pratica_id: int, evento_id: int, azione: str
         nota = svc.rifiuta_evento(session, evento, utente.id)
         flash(request, "Evento scartato." + (f" {nota}" if nota else ""))
     elif azione == "elimina":
-        nota = ordini_svc.evento_rimosso(session, evento) if evento.tipo == TipoEvento.ORDINE_RICEVUTO else None
+        nota = ordini_svc.evento_rimosso(session, evento)
         session.delete(evento)
         flash(request, "Evento eliminato." + (f" {nota}" if nota else ""))
     else:

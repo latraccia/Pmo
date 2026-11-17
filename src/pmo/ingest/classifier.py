@@ -201,6 +201,60 @@ class UsoToken:
         }
 
 
+def chiama_claude(
+    client: anthropic.Anthropic,
+    settings: Settings,
+    *,
+    system: list[dict],
+    content: str | list[dict],
+    schema: type[BaseModel],
+    uso: UsoToken,
+    model: str,
+    effort: str,
+    max_tokens: int,
+) -> BaseModel:
+    """Una chiamata con risposta strutturata (schema Pydantic). Gli errori diventano ErroreClassificazione, temporanei
+    (si riprova al giro dopo) o definitivi; i token si sommano in `uso`. La usano classificatore ed estrattore."""
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": content}],
+        "output_format": schema,
+        "output_config": {"effort": effort},
+    }
+    if settings.claude_fallbacks:
+        kwargs["betas"] = [BETA_FALLBACK]
+        kwargs["fallbacks"] = "default"
+    try:
+        response = client.beta.messages.parse(**kwargs)
+    except anthropic.RateLimitError as exc:
+        raise ErroreClassificazione(f"Limite di richieste raggiunto: {exc.message}", temporaneo=True) from exc
+    except anthropic.AuthenticationError as exc:
+        raise ErroreClassificazione("Chiave API Anthropic non valida", temporaneo=False) from exc
+    except anthropic.BadRequestError as exc:
+        if "credit balance" in str(exc.message).lower():
+            # Anthropic risponde 400, ma non dipende dal messaggio: finché non si ricarica, nulla viene classificato.
+            raise ErroreClassificazione(
+                "Credito Anthropic esaurito: ricaricare da platform.claude.com/settings/billing", temporaneo=True
+            ) from exc
+        raise ErroreClassificazione(f"Richiesta non valida: {exc.message}", temporaneo=False) from exc
+    except anthropic.APIStatusError as exc:
+        raise ErroreClassificazione(f"Errore API ({exc.status_code}): {exc.message}", temporaneo=exc.status_code >= 500) from exc
+    except anthropic.APIConnectionError as exc:
+        raise ErroreClassificazione(f"Errore di rete verso Anthropic: {exc}", temporaneo=True) from exc
+    uso.aggiungi(response.usage)
+    if response.stop_reason == "refusal":
+        dettaglio = getattr(response.stop_details, "explanation", None) if response.stop_details else None
+        raise ErroreClassificazione(f"Il modello ha rifiutato la richiesta: {dettaglio or 'nessun dettaglio'}", temporaneo=False)
+    if response.stop_reason == "max_tokens":
+        raise ErroreClassificazione("Risposta troncata (max_tokens): ridurre la dimensione del contenuto", temporaneo=False)
+    parsed = response.parsed_output
+    if parsed is None:
+        raise ErroreClassificazione("Risposta senza JSON valido", temporaneo=True)
+    return parsed
+
+
 class ClassificatoreClaude:
     def __init__(self, settings: Settings | None = None, client: anthropic.Anthropic | None = None):
         self.settings = settings or get_settings()
@@ -219,44 +273,10 @@ class ClassificatoreClaude:
         ]
 
     def _chiama(self, system: list[dict], prompt: str, schema: type[BaseModel]) -> BaseModel:
-        kwargs: dict = {
-            "model": self.settings.claude_model,
-            "max_tokens": self.settings.claude_max_tokens,
-            "system": system,
-            "messages": [{"role": "user", "content": prompt}],
-            "output_format": schema,
-            "output_config": {"effort": self.settings.claude_effort},
-        }
-        if self.settings.claude_fallbacks:
-            kwargs["betas"] = [BETA_FALLBACK]
-            kwargs["fallbacks"] = "default"
-        try:
-            response = self.client.beta.messages.parse(**kwargs)
-        except anthropic.RateLimitError as exc:
-            raise ErroreClassificazione(f"Limite di richieste raggiunto: {exc.message}", temporaneo=True) from exc
-        except anthropic.AuthenticationError as exc:
-            raise ErroreClassificazione("Chiave API Anthropic non valida", temporaneo=False) from exc
-        except anthropic.BadRequestError as exc:
-            if "credit balance" in str(exc.message).lower():
-                # Anthropic risponde 400, ma non dipende dal messaggio: finché non si ricarica, nulla viene classificato.
-                raise ErroreClassificazione(
-                    "Credito Anthropic esaurito: ricaricare da platform.claude.com/settings/billing", temporaneo=True
-                ) from exc
-            raise ErroreClassificazione(f"Richiesta non valida: {exc.message}", temporaneo=False) from exc
-        except anthropic.APIStatusError as exc:
-            raise ErroreClassificazione(f"Errore API ({exc.status_code}): {exc.message}", temporaneo=exc.status_code >= 500) from exc
-        except anthropic.APIConnectionError as exc:
-            raise ErroreClassificazione(f"Errore di rete verso Anthropic: {exc}", temporaneo=True) from exc
-        self.uso.aggiungi(response.usage)
-        if response.stop_reason == "refusal":
-            dettaglio = getattr(response.stop_details, "explanation", None) if response.stop_details else None
-            raise ErroreClassificazione(f"Il modello ha rifiutato la richiesta: {dettaglio or 'nessun dettaglio'}", temporaneo=False)
-        if response.stop_reason == "max_tokens":
-            raise ErroreClassificazione("Risposta troncata (max_tokens): ridurre la dimensione del thread", temporaneo=False)
-        parsed = response.parsed_output
-        if parsed is None:
-            raise ErroreClassificazione("Risposta senza JSON valido", temporaneo=True)
-        return parsed
+        return chiama_claude(
+            self.client, self.settings, system=system, content=prompt, schema=schema, uso=self.uso,
+            model=self.settings.claude_model, effort=self.settings.claude_effort, max_tokens=self.settings.claude_max_tokens,
+        )
 
     def classifica_thread(self, catalogo_testo: str, prompt: str) -> RisultatoThread:
         risultato = self._chiama(self._system(SYSTEM_PROMPT, catalogo_testo), prompt, RisultatoThread)

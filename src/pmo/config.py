@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     claude_fallbacks: bool = True
     link_confidence_threshold: float = 0.8  # sotto questa soglia il collegamento va verificato
     event_confidence_threshold: float = 0.7  # sotto questa soglia l'evento resta "proposto"
+    # Righe di ordini e offerte lette dai documenti (PDF, Word) degli eventi confermati.
+    estrazione_righe: bool = True
+    claude_model_estrazione: str = ""  # vuoto: lo stesso modello della classificazione
+    estrazione_effort: str = "medium"  # le tabelle meritano più attenzione della classificazione
+    estrazione_max_tokens: int = 16000
+    estrazione_max_file: int = 3  # allegati letti per mail
+    estrazione_max_mb: int = 20
+    estrazione_per_giro: int = 20
 
     # --- Scheduler e digest ---------------------------------------------------------------------
     scheduler_enabled: bool = False

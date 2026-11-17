@@ -78,6 +78,14 @@ def _euro(valore: Decimal) -> str:
     return f"{testo} €"
 
 
+def quantita_leggibile(valore: Decimal | int | float) -> str:
+    """Una quantità come la si scrive: 1, 10, 2,5 (senza gli zeri dei tre decimali del database)."""
+    testo = f"{Decimal(valore):f}"
+    if "." in testo:
+        testo = testo.rstrip("0").rstrip(".")
+    return testo.replace(".", ",")
+
+
 def _nome_riga(riga: RigaOrdine | RigaOfferta) -> str:
     return " · ".join(x for x in (riga.modulo, (riga.descrizione or "")[:60]) if x) or f"riga {riga.posizione}"
 
@@ -177,7 +185,7 @@ def verifica_ordine(session: Session, ordine: Ordine, *, user_id: int | None = N
                 scostamenti.append(
                     Scostamento(
                         "quantita",
-                        f"«{_nome_riga(riga)}»: ordinate {riga.quantita:g}, ne restano {max(disponibile, Decimal(0)):g} dell'offerta.",
+                        f"«{_nome_riga(riga)}»: ordinate {quantita_leggibile(riga.quantita)}, ne restano {quantita_leggibile(max(disponibile, Decimal(0)))} dell'offerta.",
                         riga.id,
                         offerta_riga.id,
                     )
